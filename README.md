@@ -1,75 +1,26 @@
-# React + TypeScript + Vite
+# StudyFlow
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Курсовой проект (3 курс, ФМиИТ ВГУ им. П.М. Машерова). Веб-приложение для планирования учебы, учета проведенных пар и отслеживания дедлайнов по лабораторным работам.
 
-Currently, two official plugins are available:
+## Что уже реализовано
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Загрузка расписания ВГУ (`.xlsx` / `.csv`)** — парсер находит нужную группу/подгруппу в общей таблице университета и подтягивает пары по дням недели вместе со временем, аудиториями и преподавателями. В интерфейсе есть переключение между режимом студента и режимом администратора (для загрузки новых таблиц).
+- **Учет пар и лабораторных** — предметы разделены по типам занятий (лабораторные, практики, лекции, другое). Студент указывает общее количество пар и работ по дисциплине, а программа сама считает остаток и предупреждает, если до конца семестра остается мало занятий для сдачи всех лаб.
+- **Автоматический подсчет пар** — по истечении времени пары (85 минут) счетчик проведенных занятий обновляется автоматически.
+- **Дедлайны и личные планы** — можно создавать задачи с привязкой к конкретному предмету (тогда срок считается до ближайшей пары по расписанию и переносится на следующую, если сдать не успели) либо обычные личные планы на выбранную дату.
+- **Оформление** — светлая и темная темы, несколько цветовых палитр.
 
-## React Compiler
+## Стек
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React + TypeScript (Vite)
+- SheetJS (`xlsx`) для чтения таблиц расписания
+- `localStorage` для хранения данных на текущем этапе (далее планируется подключение PostgreSQL и серверной части)
 
-## Expanding the ESLint configuration
+## Запуск
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
+Открыть в браузере `http://localhost:5173`.
