@@ -1,0 +1,505 @@
+import { useState } from 'react';
+import {
+  FileSpreadsheet, Plus, Trash2, Clock,
+  MapPin, BookOpen, Calendar, Check
+} from 'lucide-react';
+import type { Subject, ScheduleItem, DayOfWeek } from '../types';
+import { parseVsuFile, type ParsedVsuResult } from '../utils/parseVsuSchedule';
+
+interface Props {
+  subjects: Subject[];
+  setSubjects: React.Dispatch<React.SetStateAction<Subject[]>>;
+  schedule: ScheduleItem[];
+  setSchedule: React.Dispatch<React.SetStateAction<ScheduleItem[]>>;
+}
+
+const DAYS: DayOfWeek[] = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+export function Schedule({ subjects, setSubjects, schedule, setSchedule }: Props) {
+  const [selectedDay, setSelectedDay] = useState<DayOfWeek>('Пн');
+  const [entryType, setEntryType] = useState<'subject' | 'onetime'>('subject');
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>(subjects[0]?.id || '');
+  const [customTitle, setCustomTitle] = useState('');
+  const [time, setTime] = useState('08:00');
+  const [room, setRoom] = useState('');
+  const [importStatus, setImportStatus] = useState('');
+  const [isAdminMode, setIsAdminMode] = useState(false);
+
+  const [parsedFile, setParsedFile] = useState<ParsedVsuResult | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<string>('');
+
+  const dayItems = schedule
+    .filter(item => item.day === selectedDay)
+    .sort((a, b) => a.time.localeCompare(b.time));
+
+  const getLessonTimeInfo = (startTime: string, day: DayOfWeek) => {
+    const [h, m] = startTime.split(':').map(Number);
+    const startTotal = h * 60 + m;
+    const endTotal = startTotal + 85;
+    const endH = String(Math.floor(endTotal / 60) % 24).padStart(2, '0');
+    const endM = String(endTotal % 60).padStart(2, '0');
+
+    const now = new Date();
+    const daysMap: DayOfWeek[] = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+    const isToday = daysMap[now.getDay()] === day;
+    const nowTotal = now.getHours() * 60 + now.getMinutes();
+
+    let status: 'finished' | 'active' | 'upcoming' = 'upcoming';
+    if (isToday) {
+      if (nowTotal >= endTotal) status = 'finished';
+      else if (nowTotal >= startTotal) status = 'active';
+    }
+
+    return { range: `${startTime} – ${endH}:${endM}`, status };
+  };
+
+  const handleAddItem = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (entryType === 'subject') {
+      const sub = subjects.find(s => s.id === selectedSubjectId) || subjects[0];
+      if (!sub) return;
+
+      const newItem: ScheduleItem = {
+        id: Date.now().toString(),
+        day: selectedDay,
+        time,
+        title: sub.name,
+        room: room.trim() || 'Ауд. не указана',
+        subjectId: sub.id,
+        isOneTime: false
+      };
+      setSchedule([...schedule, newItem]);
+    } else {
+      if (!customTitle.trim()) return;
+      const newItem: ScheduleItem = {
+        id: Date.now().toString(),
+        day: selectedDay,
+        time,
+        title: customTitle.trim(),
+        isOneTime: true
+      };
+      setSchedule([...schedule, newItem]);
+      setCustomTitle('');
+    }
+    setRoom('');
+  };
+
+  const handleDelete = (id: string) => {
+    setSchedule(schedule.filter(item => item.id !== id));
+  };
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const parsed = await parseVsuFile(file);
+      if (parsed.groups.length === 0) {
+        setImportStatus('Не удалось найти коды групп (например, 24ПИ1д_1) в файле.');
+        return;
+      }
+      setParsedFile(parsed);
+      const thirdYear = parsed.groups.find(g => g.startsWith('24')) || parsed.groups[0];
+      setSelectedGroup(thirdYear);
+      setImportStatus(`Файл «${file.name}» прочитан! Выбери свою подгруппу ниже.`);
+    } catch {
+      setImportStatus('Ошибка при чтении файла. Проверь формат .xlsx или .csv.');
+    }
+  };
+
+  const applyGroupSchedule = () => {
+    if (!parsedFile || !selectedGroup) return;
+    const newSchedule = parsedFile.getScheduleForGroup(selectedGroup, subjects);
+
+    const detectType = (rawTitle: string): Subject['lessonType'] => {
+      const lower = rawTitle.toLowerCase();
+      if (
+        lower.includes('физическая культура') ||
+        lower.includes('физкультура') ||
+        lower.includes('кураторский') ||
+        lower.includes('конференция')
+      ) {
+        return 'Другое';
+      }
+      if (/\(лек/i.test(rawTitle)) return 'Лекция';
+      if (/\(лаб/i.test(rawTitle)) return 'Лабораторная';
+      if (/\(пз|\(сем/i.test(rawTitle)) return 'Практика / Семинар';
+      return 'Другое';
+    };
+
+    const updatedSubjects = [...subjects];
+
+    newSchedule.forEach(item => {
+      const detectedType = detectType(item.title);
+      const cleanName = item.title.replace(/\s*\((Лек|Лаб|ПЗ|Лек \(off\))\)\s*$/i, '').trim();
+
+      let matched = updatedSubjects.find(
+        s => s.name.toLowerCase() === cleanName.toLowerCase() && (s.lessonType || 'Лабораторная') === detectedType
+      );
+
+      if (!matched) {
+        matched = {
+          id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: cleanName,
+          lessonType: detectedType,
+          totalLessons: 0,
+          completedLessons: 0,
+          totalLabs: 0,
+          completedLabs: 0
+        };
+        updatedSubjects.push(matched);
+      }
+
+      item.subjectId = matched.id;
+    });
+
+    setSubjects(updatedSubjects);
+    setSchedule(newSchedule);
+    setParsedFile(null);
+    setImportStatus(`Готово! Загружено ${newSchedule.length} пар для подгруппы ${selectedGroup}.`);
+    setTimeout(() => setImportStatus(''), 6000);
+  };
+
+  return (
+    <div>
+      <section className="welcome">
+        <div>
+          <span className="date-label">УЧЕБНАЯ НЕДЕЛЯ И ЛИЧНЫЕ ПЛАНЫ</span>
+          <h1>Расписание</h1>
+          <p>Учебные пары по расписанию ВГУ и твои личные планы на каждый день.</p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            className="icon-button"
+            style={{
+              width: 'auto',
+              padding: '0 14px',
+              fontSize: '12px',
+              background: isAdminMode ? 'var(--accent-soft)' : 'var(--surface)',
+              color: isAdminMode ? 'var(--accent-dark)' : 'var(--text)',
+              borderColor: isAdminMode ? 'var(--accent)' : 'var(--border)'
+            }}
+            onClick={() => setIsAdminMode(!isAdminMode)}
+          >
+            {isAdminMode ? 'Режим: Разработчик (Админ)' : 'Режим: Студент'}
+          </button>
+
+          {isAdminMode && (
+            <label className="add-button" style={{ cursor: 'pointer' }}>
+              <FileSpreadsheet size={17} />
+              <span>Загрузить таблицу ВГУ (.xlsx / .csv)</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+              />
+            </label>
+          )}
+        </div>
+      </section>
+
+      {parsedFile && (
+        <div className="form-card" style={{ borderColor: 'var(--accent)', background: 'var(--accent-soft)' }}>
+          <strong style={{ display: 'block', marginBottom: '10px', color: 'var(--accent-dark)' }}>
+            Выбери свою группу / подгруппу из таблицы ВГУ:
+          </strong>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <select
+              value={selectedGroup}
+              onChange={e => setSelectedGroup(e.target.value)}
+              style={{
+                padding: '10px 14px',
+                borderRadius: '9px',
+                border: '1px solid var(--border)',
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                font: 'inherit',
+                minWidth: '200px'
+              }}
+            >
+              {parsedFile.groups.map(g => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+
+            <button type="button" className="add-button" onClick={applyGroupSchedule}>
+              <Check size={16} />
+              Загрузить расписание группы
+            </button>
+          </div>
+        </div>
+      )}
+
+      {importStatus && (
+        <div
+          style={{
+            padding: '12px 16px',
+            borderRadius: '10px',
+            background: 'var(--accent-soft)',
+            color: 'var(--accent-dark)',
+            fontSize: '13px',
+            marginBottom: '18px',
+            fontWeight: 500
+          }}
+        >
+          {importStatus}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '22px', flexWrap: 'wrap' }}>
+        {DAYS.map(day => {
+          const count = schedule.filter(i => i.day === day).length;
+          const isSelected = selectedDay === day;
+          return (
+            <button
+              key={day}
+              onClick={() => setSelectedDay(day)}
+              style={{
+                padding: '10px 18px',
+                borderRadius: '10px',
+                border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+                background: isSelected ? 'var(--accent)' : 'var(--surface)',
+                color: isSelected ? '#fff' : 'var(--text)',
+                fontWeight: 600,
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <span>{day}</span>
+              {count > 0 && (
+                <span
+                  style={{
+                    fontSize: '11px',
+                    padding: '1px 6px',
+                    borderRadius: '99px',
+                    background: isSelected ? 'rgba(255,255,255,0.25)' : 'var(--soft-bg)',
+                    color: isSelected ? '#fff' : 'var(--muted)'
+                  }}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <form className="form-card" onSubmit={handleAddItem}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <strong>Добавить в расписание на {selectedDay}</strong>
+
+          <div style={{ display: 'flex', gap: '6px', background: 'var(--soft-bg)', padding: '4px', borderRadius: '9px' }}>
+            <button
+              type="button"
+              onClick={() => setEntryType('subject')}
+              style={{
+                border: 0,
+                padding: '6px 12px',
+                borderRadius: '7px',
+                fontSize: '12px',
+                background: entryType === 'subject' ? 'var(--surface)' : 'transparent',
+                color: 'var(--text)',
+                fontWeight: entryType === 'subject' ? 600 : 400
+              }}
+            >
+              Предмет из базы
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntryType('onetime')}
+              style={{
+                border: 0,
+                padding: '6px 12px',
+                borderRadius: '7px',
+                fontSize: '12px',
+                background: entryType === 'onetime' ? 'var(--surface)' : 'transparent',
+                color: 'var(--text)',
+                fontWeight: entryType === 'onetime' ? 600 : 400
+              }}
+            >
+              Личный план
+            </button>
+          </div>
+        </div>
+
+        <div className="form-grid">
+          <div className="input-group">
+            <label>Время начала</label>
+            <input
+              type="time"
+              value={time}
+              onChange={e => setTime(e.target.value)}
+              required
+            />
+          </div>
+
+          {entryType === 'subject' ? (
+            <>
+              <div className="input-group">
+                <label>Выбери предмет из списка</label>
+                <select
+                  value={selectedSubjectId}
+                  onChange={e => setSelectedSubjectId(e.target.value)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '9px',
+                    border: '1px solid var(--border)',
+                    background: 'var(--soft-bg)',
+                    color: 'var(--text)',
+                    font: 'inherit'
+                  }}
+                >
+                  {subjects.map(sub => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.name} ({sub.lessonType || 'Другое'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="input-group">
+                <label>Аудитория</label>
+                <input
+                  type="text"
+                  placeholder="Например: 302"
+                  value={room}
+                  onChange={e => setRoom(e.target.value)}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="input-group" style={{ gridColumn: 'span 2' }}>
+              <label>Что запланировано (не добавляется в базу предметов)</label>
+              <input
+                type="text"
+                placeholder="Например: Консультация по курсовой или тренировка"
+                value={customTitle}
+                onChange={e => setCustomTitle(e.target.value)}
+                required
+              />
+            </div>
+          )}
+        </div>
+
+        <button type="submit" className="add-button">
+          <Plus size={16} />
+          Добавить на {selectedDay}
+        </button>
+      </form>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>План на {selectedDay}</h2>
+            <p>{dayItems.length > 0 ? `Запланировано событий: ${dayItems.length}` : 'На этот день ничего не запланировано'}</p>
+          </div>
+          <Calendar size={20} />
+        </div>
+
+        {dayItems.length === 0 ? (
+          <div style={{ padding: '24px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>
+            В этот день пар и планов пока нет. Выбери предмет или запиши личный план выше.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {dayItems.map(item => {
+              const linkedSubject = subjects.find(s => s.id === item.subjectId);
+              const timeInfo = getLessonTimeInfo(item.time, item.day);
+
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '16px',
+                    padding: '14px 16px',
+                    borderRadius: '12px',
+                    background: 'var(--soft-bg)',
+                    border: '1px solid var(--border)'
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                      fontWeight: 700,
+                      fontSize: '13px',
+                      color: 'var(--accent-dark)',
+                      minWidth: '105px'
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <Clock size={14} /> {item.time}
+                    </span>
+                    <small style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '11px' }}>
+                      {timeInfo.range}
+                    </small>
+                  </div>
+
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: '15px' }}>{item.title}</strong>
+                      <span
+                        className="subject-badge"
+                        style={{
+                          background: item.isOneTime ? 'var(--surface)' : 'var(--accent-soft)',
+                          color: item.isOneTime ? 'var(--muted)' : 'var(--accent-dark)'
+                        }}
+                      >
+                        {item.isOneTime ? 'Личный план' : 'Пара из базы'}
+                      </span>
+
+                      {timeInfo.status === 'finished' && (
+                        <span className="subject-badge" style={{ background: '#DCFCE7', color: '#166534' }}>
+                          Завершена (+1)
+                        </span>
+                      )}
+                      {timeInfo.status === 'active' && (
+                        <span className="subject-badge" style={{ background: '#FEF3C7', color: '#92400E' }}>
+                          Идёт сейчас
+                        </span>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '14px', marginTop: '5px', fontSize: '12px', color: 'var(--muted)', flexWrap: 'wrap' }}>
+                      {item.room && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <MapPin size={13} /> {item.room}
+                        </span>
+                      )}
+                      {linkedSubject && linkedSubject.totalLessons > 0 && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text)' }}>
+                          <BookOpen size={13} /> Занятие <b>{linkedSubject.completedLessons} из {linkedSubject.totalLessons}</b>
+                          {(linkedSubject.lessonType === 'Лабораторная' || linkedSubject.lessonType === 'Практика / Семинар') &&
+                            linkedSubject.totalLabs > 0 && (
+                              <> · Сдано лаб: <b>{linkedSubject.completedLabs}/{linkedSubject.totalLabs}</b></>
+                            )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    className="mini-btn"
+                    onClick={() => handleDelete(item.id)}
+                    title="Удалить из расписания"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
