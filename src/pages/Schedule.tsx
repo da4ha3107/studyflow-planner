@@ -88,24 +88,105 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule }: Props
   const handleDelete = (id: string) => {
     setSchedule(schedule.filter(item => item.id !== id));
   };
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+
+
+    // Общая база расписаний всех групп, загруженная администратором
+  const [vsuDatabase, setVsuDatabase] = useState<Record<string, ScheduleItem[]>>(() => {
+    const saved = localStorage.getItem('studyflow_vsu_db');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  const availableGroups = Object.keys(vsuDatabase);
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
       const parsed = await parseVsuFile(file);
       if (parsed.groups.length === 0) {
-        setImportStatus('Не удалось найти коды групп (например, 24ПИ1д_1) в файле.');
+        setImportStatus('Не удалось найти коды групп в файле.');
         return;
       }
-      setParsedFile(parsed);
-      const thirdYear = parsed.groups.find(g => g.startsWith('24')) || parsed.groups[0];
-      setSelectedGroup(thirdYear);
-      setImportStatus(`Файл «${file.name}» прочитан! Выбери свою подгруппу ниже.`);
+
+      // Собираем расписание сразу для всех найденных групп
+      const allGroupsMap: Record<string, ScheduleItem[]> = {};
+      parsed.groups.forEach(groupCode => {
+        allGroupsMap[groupCode] = parsed.getScheduleForGroup(groupCode, subjects);
+      });
+
+      setVsuDatabase(allGroupsMap);
+      localStorage.setItem('studyflow_vsu_db', JSON.stringify(allGroupsMap));
+      setImportStatus(`Таблица загружена! Доступно групп для выбора: ${parsed.groups.length}.`);
+      setTimeout(() => setImportStatus(''), 5000);
     } catch {
-      setImportStatus('Ошибка при чтении файла. Проверь формат .xlsx или .csv.');
+      setImportStatus('Ошибка при чтении файла. Проверьте формат .xlsx или .csv.');
     }
   };
+
+    const handleSelectStudentGroup = (groupCode: string) => {
+    setSelectedGroup(groupCode);
+
+    // Обновляем группу в профиле пользователя
+    const savedUser = localStorage.getItem('studyflow_user');
+    if (savedUser) {
+      const parsedUser = JSON.parse(savedUser);
+      parsedUser.group = groupCode;
+      localStorage.setItem('studyflow_user', JSON.stringify(parsedUser));
+    }
+
+    if (!groupCode) {
+      // Выбран режим "Личный планер (без группы)"
+      setSchedule([]);
+      return;
+    }
+
+    const groupLessons = vsuDatabase[groupCode] || [];
+    const detectType = (rawTitle: string): Subject['lessonType'] => {
+      const lower = rawTitle.toLowerCase();
+      if (
+        lower.includes('физическая культура') ||
+        lower.includes('физкультура') ||
+        lower.includes('кураторский') ||
+        lower.includes('конференция')
+      ) {
+        return 'Другое';
+      }
+      if (/\(лек/i.test(rawTitle)) return 'Лекция';
+      if (/\(лаб/i.test(rawTitle)) return 'Лабораторная';
+      if (/\(пз|\(сем/i.test(rawTitle)) return 'Практика / Семинар';
+      return 'Другое';
+    };
+
+    const updatedSubjects = [...subjects];
+    const clonedLessons = groupLessons.map(item => {
+      const detectedType = detectType(item.title);
+      const cleanName = item.title.replace(/\s*\((Лек|Лаб|ПЗ|Лек \(off\))\)\s*$/i, '').trim();
+
+      let matched = updatedSubjects.find(
+        s => s.name.toLowerCase() === cleanName.toLowerCase() && (s.lessonType || 'Другое') === detectedType
+      );
+
+      if (!matched) {
+        matched = {
+          id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: cleanName,
+          lessonType: detectedType,
+          totalLessons: 0,
+          completedLessons: 0,
+          totalLabs: 0,
+          completedLabs: 0
+        };
+        updatedSubjects.push(matched);
+      }
+
+      return { ...item, subjectId: matched.id };
+    });
+
+    setSubjects(updatedSubjects);
+    setSchedule(clonedLessons);
+  };
+
 
   const applyGroupSchedule = () => {
     if (!parsedFile || !selectedGroup) return;
@@ -158,11 +239,56 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule }: Props
     setParsedFile(null);
     setImportStatus(`Готово! Загружено ${newSchedule.length} пар для подгруппы ${selectedGroup}.`);
     setTimeout(() => setImportStatus(''), 6000);
+
+    
   };
 
   return (
     <div>
       <section className="welcome">
+
+              {availableGroups.length > 0 && (
+        <div
+          className="form-card"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+            padding: '16px 20px'
+          }}
+        >
+          <div>
+            <strong style={{ display: 'block', fontSize: '14px' }}>Учебная группа</strong>
+            <small style={{ color: 'var(--muted)' }}>
+              Выберите свою группу из расписания ВГУ или используйте личный режим
+            </small>
+          </div>
+
+          <select
+            value={selectedGroup}
+            onChange={e => handleSelectStudentGroup(e.target.value)}
+            style={{
+              padding: '10px 14px',
+              borderRadius: '9px',
+              border: '1px solid var(--border)',
+              background: 'var(--soft-bg)',
+              color: 'var(--text)',
+              font: 'inherit',
+              minWidth: '220px'
+            }}
+          >
+            <option value="">Без группы (личный планер)</option>
+            {availableGroups.map(g => (
+              <option key={g} value={g}>
+                Группа {g}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
         <div>
           <span className="date-label">УЧЕБНАЯ НЕДЕЛЯ И ЛИЧНЫЕ ПЛАНЫ</span>
           <h1>Расписание</h1>

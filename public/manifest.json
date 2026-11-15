@@ -1,0 +1,17 @@
+{
+  "name": "StudyFlow — Учебный планер",
+  "short_name": "StudyFlow",
+  "description": "Планер занятий, учет пар и дедлайнов по лабораторным",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F7F7F9",
+  "theme_color": "#8271D9",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -24,9 +24,11 @@ export interface Task {
   id: string;
   title: string;
   subject: string;
-  deadlineDays: number;
+  subjectId?: string;    // Если привязано к предмету — дедлайн считается по расписанию
+  dueDate?: string;      // Если личный план — точная дата YYYY-MM-DD
   done: boolean;
 }
+
 
 export interface UserProfile {
   name: string;

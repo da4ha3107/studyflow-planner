@@ -10,29 +10,32 @@ export function Auth({ onLogin }: Props) {
   const [isRegister, setIsRegister] = useState(true);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [group, setGroup] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() && isRegister) return;
+    if (isRegister && !name.trim()) return;
+
+    const fallbackName = email.split('@')[0] || 'Студент';
 
     const user: UserProfile = {
-      name: name.trim() || 'Даша',
-      email: email.trim() || 'student@university.ru',
-      group: group.trim() || 'ИВТ-31',
+      name: isRegister ? name.trim() : fallbackName,
+      email: email.trim(),
+      group: '' // Группу пользователь выберет позже в расписании (или оставит пустой)
     };
 
     onLogin(user);
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'grid',
-      placeItems: 'center',
-      padding: '20px',
-      background: 'var(--bg)'
-    }}>
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        padding: '20px',
+        background: 'var(--bg)'
+      }}
+    >
       <form className="form-card" onSubmit={handleSubmit} style={{ width: '100%', maxWidth: '400px' }}>
         <div className="logo" style={{ marginBottom: '20px', padding: 0 }}>
           <div className="logo-icon">
@@ -42,45 +45,33 @@ export function Auth({ onLogin }: Props) {
         </div>
 
         <h2 style={{ margin: '0 0 6px' }}>
-          {isRegister ? 'Регистрация студента' : 'Вход в кабинет'}
+          {isRegister ? 'Регистрация' : 'Вход в аккаунт'}
         </h2>
         <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--muted)' }}>
           {isRegister
-            ? 'Создай профиль, чтобы отслеживать пары и дедлайны'
-            : 'Войди в свой учебный планер'}
+            ? 'Создайте профиль для планирования учебы и личных задач'
+            : 'Войдите в свое рабочее пространство'}
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px' }}>
           {isRegister && (
-            <>
-              <div className="input-group">
-                <label>Твоё имя</label>
-                <input
-                  type="text"
-                  placeholder="Например: Даша"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="input-group">
-                <label>Учебная группа</label>
-                <input
-                  type="text"
-                  placeholder="Например: ИВТ-301"
-                  value={group}
-                  onChange={e => setGroup(e.target.value)}
-                  required
-                />
-              </div>
-            </>
+            <div className="input-group">
+              <label>Ваше имя</label>
+              <input
+                type="text"
+                placeholder="Введите ваше имя"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                required
+              />
+            </div>
           )}
 
           <div className="input-group">
-            <label>Университетская почта или логин</label>
+            <label>Электронная почта</label>
             <input
               type="email"
-              placeholder="student@edu.ru"
+              placeholder="name@example.com"
               value={email}
               onChange={e => setEmail(e.target.value)}
               required
@@ -89,11 +80,19 @@ export function Auth({ onLogin }: Props) {
 
           <div className="input-group">
             <label>Пароль</label>
-            <input type="password" placeholder="••••••••" required />
+            <input
+              type="password"
+              placeholder="Введите пароль"
+              required
+            />
           </div>
         </div>
 
-        <button type="submit" className="add-button" style={{ width: '100%', justifyContent: 'center', padding: '12px' }}>
+        <button
+          type="submit"
+          className="add-button"
+          style={{ width: '100%', justifyContent: 'center', padding: '12px' }}
+        >
           <UserCheck size={17} />
           {isRegister ? 'Создать аккаунт' : 'Войти'}
         </button>

@@ -923,3 +923,180 @@ input::placeholder {
   filter: invert(1);
   opacity: 0.75;
 }
+
+/*мобильная версия */
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  /* Скрываем боковое меню на телефоне */
+  .sidebar {
+    display: none;
+  }
+
+  /* Показываем нижний Tab Bar в стиле iOS */
+  .mobile-bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 8px 6px calc(8px + env(safe-area-inset-bottom));
+    backdrop-filter: blur(12px);
+  }
+
+  .mobile-nav-item {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px;
+  }
+
+  .mobile-nav-item.active {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* Адаптация шапки и отступов контента */
+  .topbar {
+    padding: 0 16px;
+    height: 62px;
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .theme-name {
+    display: none;
+  }
+
+  .content {
+    padding: 20px 16px calc(88px + env(safe-area-inset-bottom));
+  }
+
+  .welcome {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .subjects-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Запрещаем Safari автоматически зумить экран при клике в поле ввода */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Выпадающее окно профиля и палитр */
+.profile-popover {
+  position: absolute;
+  top: 68px;
+  right: 24px;
+  width: 270px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+  z-index: 200;
+}
+
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    display: none;
+  }
+
+  .profile-popover {
+    right: 16px;
+    top: 60px;
+  }
+
+  .mobile-bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 150;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 8px 4px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .mobile-nav-item {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 0;
+  }
+
+  .mobile-nav-item.active {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .topbar {
+    padding: 0 16px;
+    height: 62px;
+  }
+
+  .theme-name {
+    display: none;
+  }
+
+  .content {
+    padding: 20px 16px calc(95px + env(safe-area-inset-bottom));
+  }
+
+  .welcome {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .dashboard-grid,
+  .subjects-grid {
+    grid-template-columns: 1fr;
+  }
+
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
