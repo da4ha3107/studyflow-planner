@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
-
 import {
   FileSpreadsheet, Plus, Trash2, Clock,
-  MapPin, BookOpen, Calendar, Check
+  MapPin, BookOpen
 } from 'lucide-react';
 import type { Subject, ScheduleItem, DayOfWeek, UserProfile } from '../types';
-import { API_URL } from '../utils/api';
-import { parseVsuFile, type ParsedVsuResult } from '../utils/parseVsuSchedule';
-
+import { API_URL, getAuthHeaders } from '../utils/api';
+import { parseVsuFile } from '../utils/parseVsuSchedule';
 
 interface Props {
   subjects: Subject[];
@@ -17,7 +15,6 @@ interface Props {
   user: UserProfile;
   setUser: React.Dispatch<React.SetStateAction<UserProfile | null>>;
 }
-
 
 const DAYS: DayOfWeek[] = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -29,11 +26,32 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
   const [time, setTime] = useState('08:00');
   const [room, setRoom] = useState('');
   const [importStatus, setImportStatus] = useState('');
-  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
 
-  const [parsedFile, setParsedFile] = useState<ParsedVsuResult | null>(null);
+  const [vsuDatabase, setVsuDatabase] = useState<Record<string, ScheduleItem[]>>({});
+  const [selectedGroup, setSelectedGroup] = useState<string>(user.group || '');
 
+  useEffect(() => {
+    fetch(`${API_URL}/vsu-groups`)
+      .then(res => (res.ok ? res.json() : {}))
+      .then(data => setVsuDatabase(data))
+      .catch(() => console.error('Не удалось загрузить группы с сервера'));
+  }, []);
 
+  const allGroupKeys = Object.keys(vsuDatabase);
+
+  // Выделяем базовое название группы без суффикса подгруппы (_1, _2, -1, -2)
+  const getBaseGroupName = (fullCode: string) =>
+    fullCode.replace(/[_-]\d+$/, '').trim();
+
+  // Уникальный список основных групп (например: ['24ПИ1д', '24ИСиТ1д', ...])
+  const baseGroups = Array.from(new Set(allGroupKeys.map(getBaseGroupName)));
+
+  // Текущая выбранная основная группа и список её подгрупп в базе
+  const activeBaseGroup = selectedGroup ? getBaseGroupName(selectedGroup) : '';
+  const subgroupsForActive = activeBaseGroup
+    ? allGroupKeys.filter(k => getBaseGroupName(k) === activeBaseGroup).sort()
+    : [];
   const dayItems = schedule
     .filter(item => item.day === selectedDay)
     .sort((a, b) => a.time.localeCompare(b.time));
@@ -89,24 +107,12 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
       setCustomTitle('');
     }
     setRoom('');
+    setShowAddForm(false);
   };
 
   const handleDelete = (id: string) => {
     setSchedule(schedule.filter(item => item.id !== id));
   };
-
-
-     const [vsuDatabase, setVsuDatabase] = useState<Record<string, ScheduleItem[]>>({});
-  const [selectedGroup, setSelectedGroup] = useState<string>(user.group || '');
-
-  useEffect(() => {
-    fetch(`${API_URL}/vsu-groups`)
-      .then(res => (res.ok ? res.json() : {}))
-      .then(data => setVsuDatabase(data))
-      .catch(() => console.error('Не удалось загрузить группы с сервера'));
-  }, []);
-
-  const availableGroups = Object.keys(vsuDatabase);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -124,20 +130,25 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
         allGroupsMap[groupCode] = parsed.getScheduleForGroup(groupCode, subjects);
       });
 
-      setVsuDatabase(allGroupsMap);
-      await fetch(`${API_URL}/vsu-groups`, {
+      const res = await fetch(`${API_URL}/vsu-groups`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify(allGroupsMap)
       });
 
-      setImportStatus(`Таблица загружена в базу! Доступно групп для выбора: ${parsed.groups.length}.`);
+      if (!res.ok) {
+        const errData = await res.json();
+        setImportStatus(errData.error || 'Ошибка доступа при загрузке таблицы');
+        return;
+      }
+
+      setVsuDatabase(allGroupsMap);
+      setImportStatus(`Таблица загружена! Доступно групп: ${parsed.groups.length}.`);
       setTimeout(() => setImportStatus(''), 5000);
     } catch {
       setImportStatus('Ошибка при чтении файла. Проверьте формат .xlsx или .csv.');
     }
   };
-
   const handleSelectStudentGroup = (groupCode: string) => {
     setSelectedGroup(groupCode);
     setUser({ ...user, group: groupCode });
@@ -146,7 +157,6 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
       setSchedule([]);
       return;
     }
-
 
     const groupLessons = vsuDatabase[groupCode] || [];
     const detectType = (rawTitle: string): Subject['lessonType'] => {
@@ -194,135 +204,100 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
     setSchedule(clonedLessons);
   };
 
-
-  const applyGroupSchedule = () => {
-    if (!parsedFile || !selectedGroup) return;
-    const newSchedule = parsedFile.getScheduleForGroup(selectedGroup, subjects);
-
-    const detectType = (rawTitle: string): Subject['lessonType'] => {
-      const lower = rawTitle.toLowerCase();
-      if (
-        lower.includes('физическая культура') ||
-        lower.includes('физкультура') ||
-        lower.includes('кураторский') ||
-        lower.includes('конференция')
-      ) {
-        return 'Другое';
-      }
-      if (/\(лек/i.test(rawTitle)) return 'Лекция';
-      if (/\(лаб/i.test(rawTitle)) return 'Лабораторная';
-      if (/\(пз|\(сем/i.test(rawTitle)) return 'Практика / Семинар';
-      return 'Другое';
-    };
-
-    const updatedSubjects = [...subjects];
-
-    newSchedule.forEach(item => {
-      const detectedType = detectType(item.title);
-      const cleanName = item.title.replace(/\s*\((Лек|Лаб|ПЗ|Лек \(off\))\)\s*$/i, '').trim();
-
-      let matched = updatedSubjects.find(
-        s => s.name.toLowerCase() === cleanName.toLowerCase() && (s.lessonType || 'Лабораторная') === detectedType
-      );
-
-      if (!matched) {
-        matched = {
-          id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          name: cleanName,
-          lessonType: detectedType,
-          totalLessons: 0,
-          completedLessons: 0,
-          totalLabs: 0,
-          completedLabs: 0
-        };
-        updatedSubjects.push(matched);
-      }
-
-      item.subjectId = matched.id;
-    });
-
-    setSubjects(updatedSubjects);
-    setSchedule(newSchedule);
-    setParsedFile(null);
-    setImportStatus(`Готово! Загружено ${newSchedule.length} пар для подгруппы ${selectedGroup}.`);
-    setTimeout(() => setImportStatus(''), 6000);
-
-    
-  };
-
   return (
     <div>
-      <section className="welcome">
-
-              {availableGroups.length > 0 && (
-        <div
-          className="form-card"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '12px',
-            padding: '16px 20px'
-          }}
-        >
-          <div>
-            <strong style={{ display: 'block', fontSize: '14px' }}>Учебная группа</strong>
-            <small style={{ color: 'var(--muted)' }}>
-              Выберите свою группу из расписания ВГУ или используйте личный режим
-            </small>
-          </div>
-
-          <select
-            value={selectedGroup}
-            onChange={e => handleSelectStudentGroup(e.target.value)}
-            style={{
-              padding: '10px 14px',
-              borderRadius: '9px',
-              border: '1px solid var(--border)',
-              background: 'var(--soft-bg)',
-              color: 'var(--text)',
-              font: 'inherit',
-              minWidth: '220px'
-            }}
-          >
-            <option value="">Без группы (личный планер)</option>
-            {availableGroups.map(g => (
-              <option key={g} value={g}>
-                Группа {g}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
+      <section
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+          marginBottom: '16px'
+        }}
+      >
         <div>
-          <span className="date-label">УЧЕБНАЯ НЕДЕЛЯ И ЛИЧНЫЕ ПЛАНЫ</span>
-          <h1>Расписание</h1>
-          <p>Учебные пары по расписанию ВГУ и твои личные планы на каждый день.</p>
+          <h1 style={{ margin: 0, fontSize: '24px' }}>Расписание</h1>
+          <small style={{ color: 'var(--muted)' }}>Учебная неделя и личные планы</small>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-          <button
-            type="button"
-            className="icon-button"
-            style={{
-              width: 'auto',
-              padding: '0 14px',
-              fontSize: '12px',
-              background: isAdminMode ? 'var(--accent-soft)' : 'var(--surface)',
-              color: isAdminMode ? 'var(--accent-dark)' : 'var(--text)',
-              borderColor: isAdminMode ? 'var(--accent)' : 'var(--border)'
-            }}
-            onClick={() => setIsAdminMode(!isAdminMode)}
-          >
-            {isAdminMode ? 'Режим: Разработчик (Админ)' : 'Режим: Студент'}
-          </button>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {baseGroups.length > 0 && (
+            <>
+              <select
+                value={activeBaseGroup}
+                onChange={e => {
+                  const chosenBase = e.target.value;
+                  if (!chosenBase) {
+                    handleSelectStudentGroup('');
+                    return;
+                  }
+                  const subs = allGroupKeys.filter(k => getBaseGroupName(k) === chosenBase).sort();
+                  handleSelectStudentGroup(subs[0] || chosenBase);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '9px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  font: 'inherit',
+                  fontSize: '13px',
+                  fontWeight: 600
+                }}
+                title="Выберите учебную группу"
+              >
+                <option value="">Без группы (личный)</option>
+                {baseGroups.map(base => (
+                  <option key={base} value={base}>
+                    Группа {base}
+                  </option>
+                ))}
+              </select>
 
-          {isAdminMode && (
-            <label className="add-button" style={{ cursor: 'pointer' }}>
-              <FileSpreadsheet size={17} />
-              <span>Загрузить таблицу ВГУ (.xlsx / .csv)</span>
+              {subgroupsForActive.length > 1 && (
+                <div
+                  style={{
+                    display: 'flex',
+                    background: 'var(--soft-bg)',
+                    padding: '3px',
+                    borderRadius: '9px',
+                    border: '1px solid var(--border)'
+                  }}
+                >
+                  {subgroupsForActive.map((subCode, idx) => {
+                    const isSubSelected = selectedGroup === subCode;
+                    const suffixMatch = subCode.match(/[_-](\d+)$/);
+                    const label = suffixMatch ? `${suffixMatch} подгр.` : `${idx + 1} подгр.`;
+                    return (
+                      <button
+                        key={subCode}
+                        type="button"
+                        onClick={() => handleSelectStudentGroup(subCode)}
+                        style={{
+                          border: 0,
+                          padding: '5px 10px',
+                          borderRadius: '7px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          background: isSubSelected ? 'var(--accent)' : 'transparent',
+                          color: isSubSelected ? '#fff' : 'var(--text)'
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+
+          {user.role === 'ADMIN' && (
+            <label className="add-button" style={{ cursor: 'pointer', padding: '8px 12px', fontSize: '12px' }}>
+              <FileSpreadsheet size={15} />
+              <span>Загрузить ВГУ</span>
               <input
                 type="file"
                 accept=".xlsx,.xls,.csv"
@@ -333,57 +308,23 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
           )}
         </div>
       </section>
-
-      {parsedFile && (
-        <div className="form-card" style={{ borderColor: 'var(--accent)', background: 'var(--accent-soft)' }}>
-          <strong style={{ display: 'block', marginBottom: '10px', color: 'var(--accent-dark)' }}>
-            Выбери свою группу / подгруппу из таблицы ВГУ:
-          </strong>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-            <select
-              value={selectedGroup}
-              onChange={e => setSelectedGroup(e.target.value)}
-              style={{
-                padding: '10px 14px',
-                borderRadius: '9px',
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-                color: 'var(--text)',
-                font: 'inherit',
-                minWidth: '200px'
-              }}
-            >
-              {parsedFile.groups.map(g => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
-
-            <button type="button" className="add-button" onClick={applyGroupSchedule}>
-              <Check size={16} />
-              Загрузить расписание группы
-            </button>
-          </div>
-        </div>
-      )}
-
       {importStatus && (
         <div
           style={{
-            padding: '12px 16px',
-            borderRadius: '10px',
+            padding: '10px 14px',
+            borderRadius: '9px',
             background: 'var(--accent-soft)',
             color: 'var(--accent-dark)',
-            fontSize: '13px',
-            marginBottom: '18px',
+            fontSize: '12px',
+            marginBottom: '14px',
             fontWeight: 500
           }}
         >
           {importStatus}
         </div>
       )}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '22px', flexWrap: 'wrap' }}>
+
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', overflowX: 'auto', paddingBottom: '4px' }}>
         {DAYS.map(day => {
           const count = schedule.filter(i => i.day === day).length;
           const isSelected = selectedDay === day;
@@ -392,8 +333,8 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
               key={day}
               onClick={() => setSelectedDay(day)}
               style={{
-                padding: '10px 18px',
-                borderRadius: '10px',
+                padding: '8px 14px',
+                borderRadius: '9px',
                 border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
                 background: isSelected ? 'var(--accent)' : 'var(--surface)',
                 color: isSelected ? '#fff' : 'var(--text)',
@@ -401,7 +342,8 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                 fontSize: '13px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px'
+                gap: '6px',
+                flexShrink: 0
               }}
             >
               <span>{day}</span>
@@ -409,7 +351,7 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                 <span
                   style={{
                     fontSize: '11px',
-                    padding: '1px 6px',
+                    padding: '0 6px',
                     borderRadius: '99px',
                     background: isSelected ? 'rgba(255,255,255,0.25)' : 'var(--soft-bg)',
                     color: isSelected ? '#fff' : 'var(--muted)'
@@ -423,124 +365,139 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
         })}
       </div>
 
-      <form className="form-card" onSubmit={handleAddItem}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <strong>Добавить в расписание на {selectedDay}</strong>
-
-          <div style={{ display: 'flex', gap: '6px', background: 'var(--soft-bg)', padding: '4px', borderRadius: '9px' }}>
-            <button
-              type="button"
-              onClick={() => setEntryType('subject')}
-              style={{
-                border: 0,
-                padding: '6px 12px',
-                borderRadius: '7px',
-                fontSize: '12px',
-                background: entryType === 'subject' ? 'var(--surface)' : 'transparent',
-                color: 'var(--text)',
-                fontWeight: entryType === 'subject' ? 600 : 400
-              }}
-            >
-              Предмет из базы
-            </button>
-            <button
-              type="button"
-              onClick={() => setEntryType('onetime')}
-              style={{
-                border: 0,
-                padding: '6px 12px',
-                borderRadius: '7px',
-                fontSize: '12px',
-                background: entryType === 'onetime' ? 'var(--surface)' : 'transparent',
-                color: 'var(--text)',
-                fontWeight: entryType === 'onetime' ? 600 : 400
-              }}
-            >
-              Личный план
-            </button>
+      <section className="panel" style={{ padding: '18px' }}>
+        <div className="panel-heading" style={{ marginBottom: '14px' }}>
+          <div>
+            <h2 style={{ fontSize: '18px' }}>План на {selectedDay}</h2>
+            <p style={{ fontSize: '12px' }}>
+              {dayItems.length > 0 ? `Запланировано занятий: ${dayItems.length}` : 'На этот день ничего не запланировано'}
+            </p>
           </div>
+
+          <button
+            type="button"
+            className="add-button"
+            style={{ padding: '8px 12px', fontSize: '12px' }}
+            onClick={() => setShowAddForm(!showAddForm)}
+          >
+            <Plus size={15} />
+            {showAddForm ? 'Скрыть форму' : 'Добавить'}
+          </button>
         </div>
 
-        <div className="form-grid">
-          <div className="input-group">
-            <label>Время начала</label>
-            <input
-              type="time"
-              value={time}
-              onChange={e => setTime(e.target.value)}
-              required
-            />
-          </div>
-
-          {entryType === 'subject' ? (
-            <>
-              <div className="input-group">
-                <label>Выбери предмет из списка</label>
-                <select
-                  value={selectedSubjectId}
-                  onChange={e => setSelectedSubjectId(e.target.value)}
+        {showAddForm && (
+          <form
+            onSubmit={handleAddItem}
+            style={{
+              background: 'var(--soft-bg)',
+              padding: '14px',
+              borderRadius: '12px',
+              border: '1px solid var(--border)',
+              marginBottom: '16px'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+              <strong style={{ fontSize: '13px' }}>Новое событие на {selectedDay}</strong>
+              <div style={{ display: 'flex', gap: '4px', background: 'var(--surface)', padding: '3px', borderRadius: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setEntryType('subject')}
                   style={{
-                    padding: '10px 12px',
-                    borderRadius: '9px',
-                    border: '1px solid var(--border)',
-                    background: 'var(--soft-bg)',
-                    color: 'var(--text)',
-                    font: 'inherit'
+                    border: 0,
+                    padding: '5px 10px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    background: entryType === 'subject' ? 'var(--accent-soft)' : 'transparent',
+                    color: entryType === 'subject' ? 'var(--accent-dark)' : 'var(--text)',
+                    fontWeight: 600
                   }}
                 >
-                  {subjects.map(sub => (
-                    <option key={sub.id} value={sub.id}>
-                      {sub.name} ({sub.lessonType || 'Другое'})
-                    </option>
-                  ))}
-                </select>
+                  Предмет
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryType('onetime')}
+                  style={{
+                    border: 0,
+                    padding: '5px 10px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    background: entryType === 'onetime' ? 'var(--accent-soft)' : 'transparent',
+                    color: entryType === 'onetime' ? 'var(--accent-dark)' : 'var(--text)',
+                    fontWeight: 600
+                  }}
+                >
+                  Личный план
+                </button>
               </div>
-
-              <div className="input-group">
-                <label>Аудитория</label>
-                <input
-                  type="text"
-                  placeholder="Например: 302"
-                  value={room}
-                  onChange={e => setRoom(e.target.value)}
-                />
-              </div>
-            </>
-          ) : (
-            <div className="input-group" style={{ gridColumn: 'span 2' }}>
-              <label>Что запланировано (не добавляется в базу предметов)</label>
-              <input
-                type="text"
-                placeholder="Например: Консультация по курсовой или тренировка"
-                value={customTitle}
-                onChange={e => setCustomTitle(e.target.value)}
-                required
-              />
             </div>
-          )}
-        </div>
 
-        <button type="submit" className="add-button">
-          <Plus size={16} />
-          Добавить на {selectedDay}
-        </button>
-      </form>
+            <div className="form-grid" style={{ marginBottom: '12px' }}>
+              <div className="input-group">
+                <label>Время</label>
+                <input type="time" value={time} onChange={e => setTime(e.target.value)} required />
+              </div>
 
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>План на {selectedDay}</h2>
-            <p>{dayItems.length > 0 ? `Запланировано событий: ${dayItems.length}` : 'На этот день ничего не запланировано'}</p>
-          </div>
-          <Calendar size={20} />
-        </div>
+              {entryType === 'subject' ? (
+                <>
+                  <div className="input-group">
+                    <label>Предмет</label>
+                    <select
+                      value={selectedSubjectId}
+                      onChange={e => setSelectedSubjectId(e.target.value)}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '9px',
+                        border: '1px solid var(--border)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        font: 'inherit'
+                      }}
+                    >
+                      {subjects.map(sub => (
+                        <option key={sub.id} value={sub.id}>
+                          {sub.name} ({sub.lessonType || 'Другое'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="input-group">
+                    <label>Аудитория</label>
+                    <input
+                      type="text"
+                      placeholder="Например: 302"
+                      value={room}
+                      onChange={e => setRoom(e.target.value)}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="input-group" style={{ gridColumn: 'span 2' }}>
+                  <label>Название</label>
+                  <input
+                    type="text"
+                    placeholder="Например: Консультация или тренировка"
+                    value={customTitle}
+                    onChange={e => setCustomTitle(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+            </div>
+
+            <button type="submit" className="add-button" style={{ width: '100%', justifyContent: 'center' }}>
+              Сохранить на {selectedDay}
+            </button>
+          </form>
+        )}
 
         {dayItems.length === 0 ? (
-          <div style={{ padding: '24px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>
-            В этот день пар и планов пока нет. Выбери предмет или запиши личный план выше.
+          <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>
+            В этот день пар пока нет. Нажмите «Добавить» сверху, чтобы записать занятие или план.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {dayItems.map(item => {
               const linkedSubject = subjects.find(s => s.id === item.subjectId);
               const timeInfo = getLessonTimeInfo(item.time, item.day);
@@ -551,9 +508,9 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '16px',
-                    padding: '14px 16px',
-                    borderRadius: '12px',
+                    gap: '12px',
+                    padding: '12px 14px',
+                    borderRadius: '11px',
                     background: 'var(--soft-bg)',
                     border: '1px solid var(--border)'
                   }}
@@ -566,11 +523,11 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                       fontWeight: 700,
                       fontSize: '13px',
                       color: 'var(--accent-dark)',
-                      minWidth: '105px'
+                      minWidth: '88px'
                     }}
                   >
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <Clock size={14} /> {item.time}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Clock size={13} /> {item.time}
                     </span>
                     <small style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '11px' }}>
                       {timeInfo.range}
@@ -578,21 +535,11 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                   </div>
 
                   <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <strong style={{ fontSize: '15px' }}>{item.title}</strong>
-                      <span
-                        className="subject-badge"
-                        style={{
-                          background: item.isOneTime ? 'var(--surface)' : 'var(--accent-soft)',
-                          color: item.isOneTime ? 'var(--muted)' : 'var(--accent-dark)'
-                        }}
-                      >
-                        {item.isOneTime ? 'Личный план' : 'Пара из базы'}
-                      </span>
-
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: '14px' }}>{item.title}</strong>
                       {timeInfo.status === 'finished' && (
                         <span className="subject-badge" style={{ background: '#DCFCE7', color: '#166534' }}>
-                          Завершена (+1)
+                          Завершена
                         </span>
                       )}
                       {timeInfo.status === 'active' && (
@@ -602,19 +549,18 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                       )}
                     </div>
 
-                    <div style={{ display: 'flex', gap: '14px', marginTop: '5px', fontSize: '12px', color: 'var(--muted)', flexWrap: 'wrap' }}>
+                                        <div style={{ display: 'flex', gap: '12px', marginTop: '4px', fontSize: '12px', color: 'var(--muted)', flexWrap: 'wrap' }}>
                       {item.room && (
                         <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <MapPin size={13} /> {item.room}
+                          <MapPin size={12} /> {item.room}
                         </span>
                       )}
-                      {linkedSubject && linkedSubject.totalLessons > 0 && (
+                      {linkedSubject && (
                         <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text)' }}>
-                          <BookOpen size={13} /> Занятие <b>{linkedSubject.completedLessons} из {linkedSubject.totalLessons}</b>
-                          {(linkedSubject.lessonType === 'Лабораторная' || linkedSubject.lessonType === 'Практика / Семинар') &&
-                            linkedSubject.totalLabs > 0 && (
-                              <> · Сдано лаб: <b>{linkedSubject.completedLabs}/{linkedSubject.totalLabs}</b></>
-                            )}
+                          <BookOpen size={12} /> Занятие <b>{linkedSubject.completedLessons}/{linkedSubject.totalLessons || '—'}</b>
+                          {(linkedSubject.lessonType === 'Лабораторная' || linkedSubject.lessonType === 'Практика / Семинар') && (
+                            <> · Лаб: <b>{linkedSubject.completedLabs}/{linkedSubject.totalLabs || '—'}</b></>
+                          )}
                         </span>
                       )}
                     </div>
@@ -623,7 +569,7 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                   <button
                     className="mini-btn"
                     onClick={() => handleDelete(item.id)}
-                    title="Удалить из расписания"
+                    title="Удалить"
                   >
                     <Trash2 size={14} />
                   </button>

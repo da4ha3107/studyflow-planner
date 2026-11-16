@@ -11,6 +11,7 @@ const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'studyflow_secret_key_2026';
+const ADMIN_EMAIL = 'da5ha3107@yandex.by';
 
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
@@ -50,16 +51,19 @@ app.post('/api/auth/register', async (req, res) => {
       res.status(400).json({ error: 'Пользователь с такой почтой уже существует' });
       return;
     }
+    
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await prisma.user.create({
-      data: { name, email, passwordHash }
-    });
+    const role = email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() ? 'ADMIN' : 'STUDENT';
+const user = await prisma.user.create({
+  data: { name, email, passwordHash, role }
+});
+
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '30d' });
     res.json({
       token,
-      user: { id: user.id, name: user.name, email: user.email, group: user.group }
+      user: { id: user.id, name: user.name, email: user.email, group: user.group,role: user.role }
     });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка регистрации' });
@@ -85,7 +89,7 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '30d' });
     res.json({
       token,
-      user: { id: user.id, name: user.name, email: user.email, group: user.group }
+      user: { id: user.id, name: user.name, email: user.email, group: user.group, role: user.role }
     });
   } catch {
     res.status(500).json({ error: 'Ошибка входа' });
@@ -105,7 +109,7 @@ app.get('/api/data', authMiddleware, async (req: AuthRequest, res) => {
     }
 
     res.json({
-      user: { id: user.id, name: user.name, email: user.email, group: user.group },
+      user: { id: user.id, name: user.name, email: user.email, group: user.group,role: user.role },
       subjects: user.subjects,
       schedule: user.schedule,
       tasks: user.tasks
@@ -188,7 +192,7 @@ app.post('/api/sync', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// 5. Общая база расписаний ВГУ (загружает админ, читают все студенты)
+// 5. Общая база расписаний ВГУ (читают все студенты)
 app.get('/api/vsu-groups', async (_req, res) => {
   try {
     const records = await prisma.vsuGroupSchedule.findMany();
@@ -202,10 +206,19 @@ app.get('/api/vsu-groups', async (_req, res) => {
   }
 });
 
-app.post('/api/vsu-groups', async (req, res) => {
+// Загружает новую таблицу только администратор
+app.post('/api/vsu-groups', authMiddleware, async (req: AuthRequest, res) => {
   try {
+    const currentUser = await prisma.user.findUnique({ where: { id: req.userId! } });
+    if (!currentUser || currentUser.role !== 'ADMIN') {
+      res.status(403).json({ error: 'Загружать общее расписание может только администратор' });
+      return;
+    }
+
     const groupsMap = req.body as Record<string, any>;
     const entries = Object.entries(groupsMap);
+
+    await prisma.vsuGroupSchedule.deleteMany();
 
     for (const [groupCode, lessons] of entries) {
       await prisma.vsuGroupSchedule.upsert({
@@ -224,3 +237,4 @@ app.post('/api/vsu-groups', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Сервер StudyFlow запущен на http://localhost:${PORT}`);
 });
+

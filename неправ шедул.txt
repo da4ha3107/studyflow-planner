@@ -1,0 +1,524 @@
+import { useState, useEffect } from 'react';
+import {
+  FileSpreadsheet, Plus, Trash2, Clock,
+  MapPin, BookOpen
+} from 'lucide-react';
+import type { Subject, ScheduleItem, DayOfWeek, UserProfile } from '../types';
+import { API_URL, getAuthHeaders } from '../utils/api';
+import { parseVsuFile } from '../utils/parseVsuSchedule';
+
+interface Props {
+  subjects: Subject[];
+  setSubjects: React.Dispatch<React.SetStateAction<Subject[]>>;
+  schedule: ScheduleItem[];
+  setSchedule: React.Dispatch<React.SetStateAction<ScheduleItem[]>>;
+  user: UserProfile;
+  setUser: React.Dispatch<React.SetStateAction<UserProfile | null>>;
+}
+
+const DAYS: DayOfWeek[] = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, setUser }: Props) {
+  const [selectedDay, setSelectedDay] = useState<DayOfWeek>('Пн');
+  const [entryType, setEntryType] = useState<'subject' | 'onetime'>('subject');
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>(subjects?.id || '');
+  const [customTitle, setCustomTitle] = useState('');
+  const [time, setTime] = useState('08:00');
+  const [room, setRoom] = useState('');
+  const [importStatus, setImportStatus] = useState('');
+  const [showAddForm, setShowAddForm] = useState(false);
+
+  const [vsuDatabase, setVsuDatabase] = useState<Record<string, ScheduleItem[]>>({});
+  const [selectedGroup, setSelectedGroup] = useState<string>(user.group || '');
+
+  useEffect(() => {
+    fetch(`${API_URL}/vsu-groups`)
+      .then(res => (res.ok ? res.json() : {}))
+      .then(data => setVsuDatabase(data))
+      .catch(() => console.error('Не удалось загрузить группы с сервера'));
+  }, []);
+
+  const availableGroups = Object.keys(vsuDatabase);
+
+  const dayItems = schedule
+    .filter(item => item.day === selectedDay)
+    .sort((a, b) => a.time.localeCompare(b.time));
+
+  const getLessonTimeInfo = (startTime: string, day: DayOfWeek) => {
+    const [h, m] = startTime.split(':').map(Number);
+    const startTotal = h * 60 + m;
+    const endTotal = startTotal + 85;
+    const endH = String(Math.floor(endTotal / 60) % 24).padStart(2, '0');
+    const endM = String(endTotal % 60).padStart(2, '0');
+
+    const now = new Date();
+    const daysMap: DayOfWeek[] = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+    const isToday = daysMap[now.getDay()] === day;
+    const nowTotal = now.getHours() * 60 + now.getMinutes();
+
+    let status: 'finished' | 'active' | 'upcoming' = 'upcoming';
+    if (isToday) {
+      if (nowTotal >= endTotal) status = 'finished';
+      else if (nowTotal >= startTotal) status = 'active';
+    }
+
+    return { range: `${startTime} – ${endH}:${endM}`, status };
+  };
+  const handleAddItem = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (entryType === 'subject') {
+      const sub = subjects.find(s => s.id === selectedSubjectId) || subjects;
+      if (!sub) return;
+
+      const newItem: ScheduleItem = {
+        id: Date.now().toString(),
+        day: selectedDay,
+        time,
+        title: sub.name,
+        room: room.trim() || 'Ауд. не указана',
+        subjectId: sub.id,
+        isOneTime: false
+      };
+      setSchedule([...schedule, newItem]);
+    } else {
+      if (!customTitle.trim()) return;
+      const newItem: ScheduleItem = {
+        id: Date.now().toString(),
+        day: selectedDay,
+        time,
+        title: customTitle.trim(),
+        isOneTime: true
+      };
+      setSchedule([...schedule, newItem]);
+      setCustomTitle('');
+    }
+    setRoom('');
+    setShowAddForm(false);
+  };
+
+  const handleDelete = (id: string) => {
+    setSchedule(schedule.filter(item => item.id !== id));
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.;
+    if (!file) return;
+
+    try {
+      const parsed = await parseVsuFile(file);
+      if (parsed.groups.length === 0) {
+        setImportStatus('Не удалось найти коды групп в файле.');
+        return;
+      }
+
+      const allGroupsMap: Record<string, ScheduleItem[]> = {};
+      parsed.groups.forEach(groupCode => {
+        allGroupsMap[groupCode] = parsed.getScheduleForGroup(groupCode, subjects);
+      });
+
+      const res = await fetch(`${API_URL}/vsu-groups`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(allGroupsMap)
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        setImportStatus(errData.error || 'Ошибка доступа при загрузке таблицы');
+        return;
+      }
+
+      setVsuDatabase(allGroupsMap);
+      setImportStatus(`Таблица загружена! Доступно групп: ${parsed.groups.length}.`);
+      setTimeout(() => setImportStatus(''), 5000);
+    } catch {
+      setImportStatus('Ошибка при чтении файла. Проверьте формат .xlsx или .csv.');
+    }
+  };
+  const handleSelectStudentGroup = (groupCode: string) => {
+    setSelectedGroup(groupCode);
+    setUser({ ...user, group: groupCode });
+
+    if (!groupCode) {
+      setSchedule([]);
+      return;
+    }
+
+    const groupLessons = vsuDatabase[groupCode] || [];
+    const detectType = (rawTitle: string): Subject['lessonType'] => {
+      const lower = rawTitle.toLowerCase();
+      if (
+        lower.includes('физическая культура') ||
+        lower.includes('физкультура') ||
+        lower.includes('кураторский') ||
+        lower.includes('конференция')
+      ) {
+        return 'Другое';
+      }
+      if (/\(лек/i.test(rawTitle)) return 'Лекция';
+      if (/\(лаб/i.test(rawTitle)) return 'Лабораторная';
+      if (/\(пз|\(сем/i.test(rawTitle)) return 'Практика / Семинар';
+      return 'Другое';
+    };
+
+    const updatedSubjects = [...subjects];
+    const clonedLessons = groupLessons.map(item => {
+      const detectedType = detectType(item.title);
+      const cleanName = item.title.replace(/\s*\((Лек|Лаб|ПЗ|Лек \(off\))\)\s*$/i, '').trim();
+
+      let matched = updatedSubjects.find(
+        s => s.name.toLowerCase() === cleanName.toLowerCase() && (s.lessonType || 'Другое') === detectedType
+      );
+
+      if (!matched) {
+        matched = {
+          id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: cleanName,
+          lessonType: detectedType,
+          totalLessons: 0,
+          completedLessons: 0,
+          totalLabs: 0,
+          completedLabs: 0
+        };
+        updatedSubjects.push(matched);
+      }
+
+      return { ...item, subjectId: matched.id };
+    });
+
+    setSubjects(updatedSubjects);
+    setSchedule(clonedLessons);
+  };
+
+  return (
+    <div>
+      <section
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+          marginBottom: '16px'
+        }}
+      >
+        <div>
+          <h1 style={{ margin: 0, fontSize: '24px' }}>Расписание</h1>
+          <small style={{ color: 'var(--muted)' }}>Учебная неделя и личные планы</small>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {availableGroups.length > 0 && (
+            <select
+              value={selectedGroup}
+              onChange={e => handleSelectStudentGroup(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '9px',
+                border: '1px solid var(--border)',
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                font: 'inherit',
+                fontSize: '13px',
+                fontWeight: 600
+              }}
+              title="Выберите учебную группу"
+            >
+              <option value="">Без группы (личный)</option>
+              {availableGroups.map(g => (
+                <option key={g} value={g}>
+                  Группа {g}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {user.role === 'ADMIN' && (
+            <label className="add-button" style={{ cursor: 'pointer', padding: '8px 12px', fontSize: '12px' }}>
+              <FileSpreadsheet size={15} />
+              <span>Загрузить ВГУ</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+              />
+            </label>
+          )}
+        </div>
+      </section>
+      {importStatus && (
+        <div
+          style={{
+            padding: '10px 14px',
+            borderRadius: '9px',
+            background: 'var(--accent-soft)',
+            color: 'var(--accent-dark)',
+            fontSize: '12px',
+            marginBottom: '14px',
+            fontWeight: 500
+          }}
+        >
+          {importStatus}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', overflowX: 'auto', paddingBottom: '4px' }}>
+        {DAYS.map(day => {
+          const count = schedule.filter(i => i.day === day).length;
+          const isSelected = selectedDay === day;
+          return (
+            <button
+              key={day}
+              onClick={() => setSelectedDay(day)}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '9px',
+                border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+                background: isSelected ? 'var(--accent)' : 'var(--surface)',
+                color: isSelected ? '#fff' : 'var(--text)',
+                fontWeight: 600,
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                flexShrink: 0
+              }}
+            >
+              <span>{day}</span>
+              {count > 0 && (
+                <span
+                  style={{
+                    fontSize: '11px',
+                    padding: '0 6px',
+                    borderRadius: '99px',
+                    background: isSelected ? 'rgba(255,255,255,0.25)' : 'var(--soft-bg)',
+                    color: isSelected ? '#fff' : 'var(--muted)'
+                  }}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <section className="panel" style={{ padding: '18px' }}>
+        <div className="panel-heading" style={{ marginBottom: '14px' }}>
+          <div>
+            <h2 style={{ fontSize: '18px' }}>План на {selectedDay}</h2>
+            <p style={{ fontSize: '12px' }}>
+              {dayItems.length > 0 ? `Запланировано занятий: ${dayItems.length}` : 'На этот день ничего не запланировано'}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            className="add-button"
+            style={{ padding: '8px 12px', fontSize: '12px' }}
+            onClick={() => setShowAddForm(!showAddForm)}
+          >
+            <Plus size={15} />
+            {showAddForm ? 'Скрыть форму' : 'Добавить'}
+          </button>
+        </div>
+
+        {showAddForm && (
+          <form
+            onSubmit={handleAddItem}
+            style={{
+              background: 'var(--soft-bg)',
+              padding: '14px',
+              borderRadius: '12px',
+              border: '1px solid var(--border)',
+              marginBottom: '16px'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+              <strong style={{ fontSize: '13px' }}>Новое событие на {selectedDay}</strong>
+              <div style={{ display: 'flex', gap: '4px', background: 'var(--surface)', padding: '3px', borderRadius: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setEntryType('subject')}
+                  style={{
+                    border: 0,
+                    padding: '5px 10px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    background: entryType === 'subject' ? 'var(--accent-soft)' : 'transparent',
+                    color: entryType === 'subject' ? 'var(--accent-dark)' : 'var(--text)',
+                    fontWeight: 600
+                  }}
+                >
+                  Предмет
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryType('onetime')}
+                  style={{
+                    border: 0,
+                    padding: '5px 10px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    background: entryType === 'onetime' ? 'var(--accent-soft)' : 'transparent',
+                    color: entryType === 'onetime' ? 'var(--accent-dark)' : 'var(--text)',
+                    fontWeight: 600
+                  }}
+                >
+                  Личный план
+                </button>
+              </div>
+            </div>
+
+            <div className="form-grid" style={{ marginBottom: '12px' }}>
+              <div className="input-group">
+                <label>Время</label>
+                <input type="time" value={time} onChange={e => setTime(e.target.value)} required />
+              </div>
+
+              {entryType === 'subject' ? (
+                <>
+                  <div className="input-group">
+                    <label>Предмет</label>
+                    <select
+                      value={selectedSubjectId}
+                      onChange={e => setSelectedSubjectId(e.target.value)}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '9px',
+                        border: '1px solid var(--border)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        font: 'inherit'
+                      }}
+                    >
+                      {subjects.map(sub => (
+                        <option key={sub.id} value={sub.id}>
+                          {sub.name} ({sub.lessonType || 'Другое'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="input-group">
+                    <label>Аудитория</label>
+                    <input
+                      type="text"
+                      placeholder="Например: 302"
+                      value={room}
+                      onChange={e => setRoom(e.target.value)}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="input-group" style={{ gridColumn: 'span 2' }}>
+                  <label>Название</label>
+                  <input
+                    type="text"
+                    placeholder="Например: Консультация или тренировка"
+                    value={customTitle}
+                    onChange={e => setCustomTitle(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+            </div>
+
+            <button type="submit" className="add-button" style={{ width: '100%', justifyContent: 'center' }}>
+              Сохранить на {selectedDay}
+            </button>
+          </form>
+        )}
+
+        {dayItems.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>
+            В этот день пар пока нет. Нажмите «Добавить» сверху, чтобы записать занятие или план.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {dayItems.map(item => {
+              const linkedSubject = subjects.find(s => s.id === item.subjectId);
+              const timeInfo = getLessonTimeInfo(item.time, item.day);
+
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '12px 14px',
+                    borderRadius: '11px',
+                    background: 'var(--soft-bg)',
+                    border: '1px solid var(--border)'
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                      fontWeight: 700,
+                      fontSize: '13px',
+                      color: 'var(--accent-dark)',
+                      minWidth: '88px'
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Clock size={13} /> {item.time}
+                    </span>
+                    <small style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '11px' }}>
+                      {timeInfo.range}
+                    </small>
+                  </div>
+
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: '14px' }}>{item.title}</strong>
+                      {timeInfo.status === 'finished' && (
+                        <span className="subject-badge" style={{ background: '#DCFCE7', color: '#166534' }}>
+                          Завершена
+                        </span>
+                      )}
+                      {timeInfo.status === 'active' && (
+                        <span className="subject-badge" style={{ background: '#FEF3C7', color: '#92400E' }}>
+                          Идёт сейчас
+                        </span>
+                      )}
+                    </div>
+
+                                        <div style={{ display: 'flex', gap: '12px', marginTop: '4px', fontSize: '12px', color: 'var(--muted)', flexWrap: 'wrap' }}>
+                      {item.room && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <MapPin size={12} /> {item.room}
+                        </span>
+                      )}
+                      {linkedSubject && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text)' }}>
+                          <BookOpen size={12} /> Занятие <b>{linkedSubject.completedLessons}/{linkedSubject.totalLessons || '—'}</b>
+                          {(linkedSubject.lessonType === 'Лабораторная' || linkedSubject.lessonType === 'Практика / Семинар') && (
+                            <> · Лаб: <b>{linkedSubject.completedLabs}/{linkedSubject.totalLabs || '—'}</b></>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    className="mini-btn"
+                    onClick={() => handleDelete(item.id)}
+                    title="Удалить"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

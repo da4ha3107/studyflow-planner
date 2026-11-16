@@ -13,11 +13,13 @@ model User {
   email        String         @unique
   passwordHash String
   group        String         @default("")
+  role         String         @default("STUDENT")
   subjects     Subject[]
   schedule     ScheduleItem[]
   tasks        Task[]
   createdAt    DateTime       @default(now())
 }
+
 
 model VsuGroupSchedule {
   id        String   @id @default(uuid())
