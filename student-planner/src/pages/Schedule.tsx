@@ -268,7 +268,9 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                   {subgroupsForActive.map((subCode, idx) => {
                     const isSubSelected = selectedGroup === subCode;
                     const suffixMatch = subCode.match(/[_-](\d+)$/);
-                    const label = suffixMatch ? `${suffixMatch} подгр.` : `${idx + 1} подгр.`;
+                  const label = suffixMatch ? `${suffixMatch[1]} подгр.` : `${idx + 1} подгр.`;
+
+
                     return (
                       <button
                         key={subCode}
