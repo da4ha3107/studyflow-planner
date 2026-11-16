@@ -4,7 +4,7 @@ import {
   MapPin, BookOpen
 } from 'lucide-react';
 import type { Subject, ScheduleItem, DayOfWeek, UserProfile } from '../types';
-import { API_URL } from '../utils/api';
+import { API_URL, getAuthHeaders } from '../utils/api';
 import { parseVsuFile } from '../utils/parseVsuSchedule';
 
 interface Props {
@@ -26,7 +26,6 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
   const [time, setTime] = useState('08:00');
   const [room, setRoom] = useState('');
   const [importStatus, setImportStatus] = useState('');
-  const [isAdminMode, setIsAdminMode] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
 
   const [vsuDatabase, setVsuDatabase] = useState<Record<string, ScheduleItem[]>>({});
@@ -39,8 +38,20 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
       .catch(() => console.error('Не удалось загрузить группы с сервера'));
   }, []);
 
-  const availableGroups = Object.keys(vsuDatabase);
+  const allGroupKeys = Object.keys(vsuDatabase);
 
+  // Выделяем базовое название группы без суффикса подгруппы (_1, _2, -1, -2)
+  const getBaseGroupName = (fullCode: string) =>
+    fullCode.replace(/[_-]\d+$/, '').trim();
+
+  // Уникальный список основных групп (например: ['24ПИ1д', '24ИСиТ1д', ...])
+  const baseGroups = Array.from(new Set(allGroupKeys.map(getBaseGroupName)));
+
+  // Текущая выбранная основная группа и список её подгрупп в базе
+  const activeBaseGroup = selectedGroup ? getBaseGroupName(selectedGroup) : '';
+  const subgroupsForActive = activeBaseGroup
+    ? allGroupKeys.filter(k => getBaseGroupName(k) === activeBaseGroup).sort()
+    : [];
   const dayItems = schedule
     .filter(item => item.day === selectedDay)
     .sort((a, b) => a.time.localeCompare(b.time));
@@ -102,7 +113,8 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
   const handleDelete = (id: string) => {
     setSchedule(schedule.filter(item => item.id !== id));
   };
-   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -118,20 +130,25 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
         allGroupsMap[groupCode] = parsed.getScheduleForGroup(groupCode, subjects);
       });
 
-      setVsuDatabase(allGroupsMap);
-      await fetch(`${API_URL}/vsu-groups`, {
+      const res = await fetch(`${API_URL}/vsu-groups`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify(allGroupsMap)
       });
 
+      if (!res.ok) {
+        const errData = await res.json();
+        setImportStatus(errData.error || 'Ошибка доступа при загрузке таблицы');
+        return;
+      }
+
+      setVsuDatabase(allGroupsMap);
       setImportStatus(`Таблица загружена! Доступно групп: ${parsed.groups.length}.`);
       setTimeout(() => setImportStatus(''), 5000);
     } catch {
       setImportStatus('Ошибка при чтении файла. Проверьте формат .xlsx или .csv.');
     }
   };
-
   const handleSelectStudentGroup = (groupCode: string) => {
     setSelectedGroup(groupCode);
     setUser({ ...user, group: groupCode });
@@ -189,7 +206,6 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
 
   return (
     <div>
-      {/* Компактная шапка в одну строку */}
       <section
         style={{
           display: 'flex',
@@ -206,49 +222,79 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
         </div>
 
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-          {availableGroups.length > 0 && (
-            <select
-              value={selectedGroup}
-              onChange={e => handleSelectStudentGroup(e.target.value)}
-              style={{
-                padding: '8px 12px',
-                borderRadius: '9px',
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-                color: 'var(--text)',
-                font: 'inherit',
-                fontSize: '13px',
-                fontWeight: 600
-              }}
-              title="Выберите учебную группу"
-            >
-              <option value="">Без группы (личный)</option>
-              {availableGroups.map(g => (
-                <option key={g} value={g}>
-                  Группа {g}
-                </option>
-              ))}
-            </select>
+                    {baseGroups.length > 0 && (
+            <>
+              <select
+                value={activeBaseGroup}
+                onChange={e => {
+                  const chosenBase = e.target.value;
+                  if (!chosenBase) {
+                    handleSelectStudentGroup('');
+                    return;
+                  }
+                  const subs = allGroupKeys.filter(k => getBaseGroupName(k) === chosenBase).sort();
+                  handleSelectStudentGroup(subs[0] || chosenBase);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '9px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  font: 'inherit',
+                  fontSize: '13px',
+                  fontWeight: 600
+                }}
+                title="Выберите учебную группу"
+              >
+                <option value="">Без группы (личный)</option>
+                {baseGroups.map(base => (
+                  <option key={base} value={base}>
+                    Группа {base}
+                  </option>
+                ))}
+              </select>
+
+              {subgroupsForActive.length > 1 && (
+                <div
+                  style={{
+                    display: 'flex',
+                    background: 'var(--soft-bg)',
+                    padding: '3px',
+                    borderRadius: '9px',
+                    border: '1px solid var(--border)'
+                  }}
+                >
+                  {subgroupsForActive.map((subCode, idx) => {
+                    const isSubSelected = selectedGroup === subCode;
+                    const suffixMatch = subCode.match(/[_-](\d+)$/);
+                    const label = suffixMatch ? `${suffixMatch} подгр.` : `${idx + 1} подгр.`;
+                    return (
+                      <button
+                        key={subCode}
+                        type="button"
+                        onClick={() => handleSelectStudentGroup(subCode)}
+                        style={{
+                          border: 0,
+                          padding: '5px 10px',
+                          borderRadius: '7px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          background: isSubSelected ? 'var(--accent)' : 'transparent',
+                          color: isSubSelected ? '#fff' : 'var(--text)'
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
 
-          <button
-            type="button"
-            className="icon-button"
-            style={{
-              width: 'auto',
-              height: '36px',
-              padding: '0 12px',
-              fontSize: '12px',
-              background: isAdminMode ? 'var(--accent-soft)' : 'var(--surface)',
-              color: isAdminMode ? 'var(--accent-dark)' : 'var(--text)',
-              borderColor: isAdminMode ? 'var(--accent)' : 'var(--border)'
-            }}
-            onClick={() => setIsAdminMode(!isAdminMode)}
-          >
-            {isAdminMode ? 'Админ' : 'Студент'}
-          </button>
 
-          {isAdminMode && (
+          {user.role === 'ADMIN' && (
             <label className="add-button" style={{ cursor: 'pointer', padding: '8px 12px', fontSize: '12px' }}>
               <FileSpreadsheet size={15} />
               <span>Загрузить ВГУ</span>
@@ -262,7 +308,6 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
           )}
         </div>
       </section>
-
       {importStatus && (
         <div
           style={{
@@ -278,7 +323,7 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
           {importStatus}
         </div>
       )}
-      {/* Дни недели */}
+
       <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', overflowX: 'auto', paddingBottom: '4px' }}>
         {DAYS.map(day => {
           const count = schedule.filter(i => i.day === day).length;
@@ -320,7 +365,6 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
         })}
       </div>
 
-      {/* Расписание на день (теперь сразу наверху!) */}
       <section className="panel" style={{ padding: '18px' }}>
         <div className="panel-heading" style={{ marginBottom: '14px' }}>
           <div>
@@ -341,7 +385,6 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
           </button>
         </div>
 
-        {/* Скрытая форма добавления */}
         {showAddForm && (
           <form
             onSubmit={handleAddItem}
@@ -505,6 +548,7 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, s
                         </span>
                       )}
                     </div>
+
                                         <div style={{ display: 'flex', gap: '12px', marginTop: '4px', fontSize: '12px', color: 'var(--muted)', flexWrap: 'wrap' }}>
                       {item.room && (
                         <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>

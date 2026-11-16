@@ -109,31 +109,73 @@ export function Dashboard({ user, subjects, tasks, schedule, setActiveTab }: Pro
       </section>
 
       <section className="dashboard-grid">
-        <div className="panel progress-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Учебный прогресс</h2>
-              <p>Общая статистика твоих задач</p>
+                <div className="panel progress-panel" style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+          {/* 1. Прогресс по лабораторным и практикам */}
+          {(() => {
+            const totalLabsAll = subjects.reduce((acc, s) => acc + (s.totalLabs || 0), 0);
+            const doneLabsAll = subjects.reduce((acc, s) => acc + (s.completedLabs || 0), 0);
+            const labsLeftAll = Math.max(0, totalLabsAll - doneLabsAll);
+            const labsPercent = totalLabsAll > 0 ? Math.round((doneLabsAll / totalLabsAll) * 100) : 0;
+
+            return (
+              <div>
+                <div className="panel-heading" style={{ marginBottom: '12px' }}>
+                  <div>
+                    <h2>Прогресс по лабам</h2>
+                    <p>Общая статистика сдачи работ</p>
+                  </div>
+                </div>
+
+                <div className="progress-number">
+                  <strong>{labsPercent}%</strong>
+                  <span>сдано</span>
+                </div>
+
+                <div className="progress-track">
+                  <div
+                    className="progress-value"
+                    style={{ width: `${labsPercent}%` }}
+                  />
+                </div>
+
+                <div className="progress-footer">
+                  <span>{doneLabsAll} сдано</span>
+                  <span>{labsLeftAll} осталось</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          <div style={{ height: '1px', background: 'var(--border)' }} />
+
+          {/* 2. Прогресс по личным задачам */}
+          <div>
+            <div className="panel-heading" style={{ marginBottom: '12px' }}>
+              <div>
+                <h2>Учебный прогресс</h2>
+                <p>Общая статистика твоих задач</p>
+              </div>
+            </div>
+
+            <div className="progress-number">
+              <strong>{progressPercent}%</strong>
+              <span>выполнено</span>
+            </div>
+
+            <div className="progress-track">
+              <div
+                className="progress-value"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+
+            <div className="progress-footer">
+              <span>{completedTasksCount} выполнено</span>
+              <span>{activeTasksCount} осталось</span>
             </div>
           </div>
-
-          <div className="progress-number">
-            <strong>{progressPercent}%</strong>
-            <span>выполнено</span>
-          </div>
-
-          <div className="progress-track">
-            <div
-              className="progress-value"
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-
-          <div className="progress-footer">
-            <span>{completedTasksCount} выполнено</span>
-            <span>{activeTasksCount} осталось</span>
-          </div>
         </div>
+
 
         <div className="panel schedule-panel">
           <div className="panel-heading">

@@ -30,6 +30,7 @@ export async function parseVsuFile(file: File): Promise<ParsedVsuResult> {
   });
 
   // 1. Ищем строку с шифрами подгрупп (содержит паттерны вида 24ПИ1д_1 или 23ИСиТ1д)
+  // 1. Ищем строку с шифрами подгрупп (содержит паттерны вида 24ПИ1д_1, 24ПИ1д_2)
   let groupRowIndex = -1;
   const groupColumns: { code: string; colIndex: number }[] = [];
 
@@ -44,12 +45,17 @@ export async function parseVsuFile(file: File): Promise<ParsedVsuResult> {
       }
     });
 
-    if (foundInRow.length >= 3) {
+    // Если в строке есть коды с подгруппами (_1, _2) — это нужная нам нижняя строка шапки
+    const hasSubgroups = foundInRow.some(item => /_\d+$/.test(item.code));
+
+    if (foundInRow.length >= 3 && hasSubgroups) {
       groupRowIndex = r;
+      groupColumns.length = 0;
       groupColumns.push(...foundInRow);
       break;
     }
   }
+
 
   return {
     groups: groupColumns.map(g => g.code),

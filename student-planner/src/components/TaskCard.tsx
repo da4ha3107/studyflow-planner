@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckSquare, Plus, Trash2 } from 'lucide-react';
+import { CheckSquare, Plus, Trash2, Pencil, Check } from 'lucide-react';
 import type { Subject, Task, ScheduleItem } from '../types';
 import { getTaskDeadlineInfo } from '../utils/taskDeadline';
 
@@ -73,6 +73,23 @@ export function TaskCard({ tasks, setTasks, subjects, setSubjects, schedule }: P
     setNewTaskTitle('');
     setNewTaskDate('');
   };
+
+    const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+
+  const startEditTask = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingTaskId(task.id);
+    setEditTitle(task.title);
+  };
+
+  const saveEditTask = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!editTitle.trim()) return;
+    setTasks(tasks.map(t => (t.id === id ? { ...t, title: editTitle.trim() } : t)));
+    setEditingTaskId(null);
+  };
+
 
   const deleteTask = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -194,21 +211,65 @@ export function TaskCard({ tasks, setTasks, subjects, setSubjects, schedule }: P
             <div
               className="task-row"
               key={task.id}
-              onClick={() => toggleTask(task.id)}
+              onClick={() => {
+                if (editingTaskId !== task.id) toggleTask(task.id);
+              }}
               style={{ cursor: 'pointer', opacity: task.done ? 0.5 : 1 }}
             >
               <div className="task-icon">
                 <CheckSquare size={19} />
               </div>
+
               <div className="task-info">
-                <strong style={{ textDecoration: task.done ? 'line-through' : 'none' }}>
-                  {task.title}
-                </strong>
+                {editingTaskId === task.id ? (
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => setEditTitle(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '6px 8px',
+                      borderRadius: '7px',
+                      border: '1px solid var(--accent)',
+                      background: 'var(--surface)',
+                      color: 'var(--text)',
+                      font: 'inherit'
+                    }}
+                  />
+                ) : (
+                  <strong style={{ textDecoration: task.done ? 'line-through' : 'none' }}>
+                    {task.title}
+                  </strong>
+                )}
                 <small>{task.subject}</small>
               </div>
+
               <span className={`deadline ${deadlineInfo.isUrgent ? 'urgent' : 'normal'}`}>
                 {deadlineInfo.text}
               </span>
+
+              {editingTaskId === task.id ? (
+                <button
+                  type="button"
+                  className="mini-btn"
+                  onClick={e => saveEditTask(task.id, e)}
+                  title="Сохранить"
+                  style={{ background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' }}
+                >
+                  <Check size={14} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="mini-btn"
+                  onClick={e => startEditTask(task, e)}
+                  title="Редактировать задачу"
+                >
+                  <Pencil size={14} />
+                </button>
+              )}
+
               <button
                 type="button"
                 className="mini-btn"

@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { Plus, AlertTriangle, Trash2, BookOpen, CheckCircle2 } from 'lucide-react';
+import {
+  Plus, AlertTriangle, Trash2, BookOpen,
+  CheckCircle2, Pencil, Check, ChevronDown, ChevronUp
+} from 'lucide-react';
 import type { Subject, LessonType } from '../types';
 
 interface Props {
@@ -28,15 +31,17 @@ export function Subjects({ subjects, setSubjects }: Props) {
   const [totalLabs, setTotalLabs] = useState<number | ''>('');
   const [completedLabs, setCompletedLabs] = useState<number | ''>('');
 
+  // Состояния для режима редактирования карточки и раскрытия списка лаб
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+
+
   const showLabsInput = activeCategory === 'Лабораторная' || activeCategory === 'Практика / Семинар';
 
-  // Фильтруем предметы по выбранной вкладке
   const filteredSubjects = subjects.filter(sub => {
     const type = sub.lessonType || 'Другое';
-    if (activeCategory === 'Другое') {
-      return OTHER_SUBTYPES.includes(type);
-    }
-    return type === activeCategory;
+    return activeCategory === 'Другое' ? OTHER_SUBTYPES.includes(type) : type === activeCategory;
   });
 
   const getTabCount = (tabId: CategoryTab) => {
@@ -46,11 +51,16 @@ export function Subjects({ subjects, setSubjects }: Props) {
     }).length;
   };
 
+  // Создаём начальный массив галочек [1, 2, ..., count]
+  const buildInitialChecklist = (count: number) =>
+    Array.from({ length: count }, (_, i) => i + 1);
+
   const handleAddSubject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
     const finalType: LessonType = activeCategory === 'Другое' ? otherSubtype : activeCategory;
+    const doneLabsNum = showLabsInput ? Number(completedLabs) || 0 : 0;
 
     const newSubject: Subject = {
       id: Date.now().toString(),
@@ -59,7 +69,8 @@ export function Subjects({ subjects, setSubjects }: Props) {
       totalLessons: Number(totalLessons) || 0,
       completedLessons: Number(completedLessons) || 0,
       totalLabs: showLabsInput ? Number(totalLabs) || 0 : 0,
-      completedLabs: showLabsInput ? Number(completedLabs) || 0 : 0
+      completedLabs: doneLabsNum,
+      completedLabItems: buildInitialChecklist(doneLabsNum)
     };
 
     setSubjects([...subjects, newSubject]);
@@ -68,6 +79,7 @@ export function Subjects({ subjects, setSubjects }: Props) {
     setCompletedLessons('');
     setTotalLabs('');
     setCompletedLabs('');
+    setShowAddForm(false);
   };
 
   const updateNumber = (
@@ -80,13 +92,42 @@ export function Subjects({ subjects, setSubjects }: Props) {
       subjects.map(sub => {
         if (sub.id !== id) return sub;
         const updated = { ...sub, [field]: safeVal };
+
         if (updated.totalLessons > 0 && updated.completedLessons > updated.totalLessons) {
           updated.completedLessons = updated.totalLessons;
         }
         if (updated.totalLabs > 0 && updated.completedLabs > updated.totalLabs) {
           updated.completedLabs = updated.totalLabs;
         }
+        // Если студент руками поменял число сданных лаб — синхронизируем квадратики
+        if (field === 'completedLabs') {
+          updated.completedLabItems = buildInitialChecklist(updated.completedLabs);
+        }
         return updated;
+      })
+    );
+  };
+
+  // Переключение конкретной лабораторной работы в чек-листе
+  const toggleLabCheckbox = (subId: string, labNumber: number) => {
+    setSubjects(
+      subjects.map(sub => {
+        if (sub.id !== subId) return sub;
+        const currentList =
+          sub.completedLabItems && sub.completedLabItems.length === sub.completedLabs
+            ? sub.completedLabItems
+            : buildInitialChecklist(sub.completedLabs);
+
+        const exists = currentList.includes(labNumber);
+        const nextList = exists
+          ? currentList.filter(n => n !== labNumber)
+          : [...currentList, labNumber].sort((a, b) => a - b);
+
+        return {
+          ...sub,
+          completedLabItems: nextList,
+          completedLabs: nextList.length
+        };
       })
     );
   };
@@ -99,7 +140,7 @@ export function Subjects({ subjects, setSubjects }: Props) {
     width: '48px',
     padding: '4px 6px',
     borderRadius: '7px',
-    border: '1px solid var(--border)',
+    border: '1px solid var(--accent)',
     background: 'var(--surface)',
     color: 'var(--text)',
     textAlign: 'center',
@@ -108,28 +149,64 @@ export function Subjects({ subjects, setSubjects }: Props) {
   };
   return (
     <div>
-      <section className="welcome">
+            <section
+        className="welcome"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '16px',
+          textAlign: 'left'
+        }}
+      >
         <div>
           <span className="date-label">УЧЁТ ЗАНЯТИЙ И РАБОТ</span>
-          <h1>Мои предметы</h1>
-          <p>Выбери нужный раздел, чтобы посмотреть или заполнить количество пар и работ.</p>
+          <h1 style={{ margin: '4px 0' }}>Мои предметы</h1>
+          <p style={{ margin: 0 }}>
+            Нажми на предмет, чтобы отметить сданные работы, или на карандаш — чтобы изменить цифры.
+          </p>
         </div>
 
-        {subjects.length > 0 && (
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 }}>
           <button
             type="button"
-            className="icon-button"
-            style={{ width: 'auto', padding: '0 14px', fontSize: '12px', color: '#DC2626' }}
-            onClick={() => {
-              if (window.confirm('Удалить все предметы из списка?')) setSubjects([]);
+            className="add-button"
+            style={{
+              padding: '9px 14px',
+              fontSize: '13px',
+              whiteSpace: 'nowrap',
+              height: '38px'
             }}
+            onClick={() => setShowAddForm(!showAddForm)}
           >
-            Очистить список
+            <Plus size={16} />
+            {showAddForm ? 'Скрыть форму' : 'Добавить предмет'}
           </button>
-        )}
+
+          {subjects.length > 0 && (
+            <button
+              type="button"
+              className="icon-button"
+              style={{
+                width: 'auto',
+                height: '38px',
+                padding: '0 14px',
+                fontSize: '12px',
+                color: '#DC2626',
+                whiteSpace: 'nowrap'
+              }}
+              onClick={() => {
+                if (window.confirm('Удалить все предметы из списка?')) setSubjects([]);
+              }}
+            >
+              Очистить список
+            </button>
+          )}
+        </div>
       </section>
 
-      {/* 4 вкладки категорий: Лабы, ПЗ, Лекции, Другое */}
+
       <div style={{ display: 'flex', gap: '8px', marginBottom: '22px', flexWrap: 'wrap' }}>
         {TABS.map(tab => {
           const isSelected = activeCategory === tab.id;
@@ -169,12 +246,13 @@ export function Subjects({ subjects, setSubjects }: Props) {
         })}
       </div>
 
-      {/* Форма добавления для выбранного раздела */}
+
+ {showAddForm && (
       <form className="form-card" onSubmit={handleAddSubject}>
         <strong>Добавить в раздел «{TABS.find(t => t.id === activeCategory)?.label}»</strong>
         <div className="form-grid">
           <div className="input-group">
-            <label>Название предмета / занятия</label>
+            <label>Название предмета</label>
             <input
               type="text"
               placeholder={activeCategory === 'Другое' ? 'Например: Физическая культура' : 'Например: Компьютерные сети'}
@@ -266,11 +344,13 @@ export function Subjects({ subjects, setSubjects }: Props) {
           Добавить
         </button>
       </form>
+      )}
 
-      {/* Карточки выбранной категории */}
+
+
       {filteredSubjects.length === 0 ? (
         <div className="panel" style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '13px', padding: '32px' }}>
-          В разделе «{TABS.find(t => t.id === activeCategory)?.label}» пока пусто. Добавь предмет выше или загрузи расписание вуза.
+          В разделе «{TABS.find(t => t.id === activeCategory)?.label}» пока пусто.
         </div>
       ) : (
         <div className="subjects-grid">
@@ -278,9 +358,21 @@ export function Subjects({ subjects, setSubjects }: Props) {
             const type = sub.lessonType || 'Другое';
             const supportsLabs = HAS_LABS_TYPES.includes(type);
             const isConfigured = sub.totalLessons > 0;
+            // Если предмет ещё не заполнен — сразу открываем в режиме ввода, иначе в режиме просмотра
+            const isEditing = editingId === sub.id || !isConfigured;
+            const isExpanded = expandedId === sub.id;
+
             const lessonsLeft = Math.max(0, sub.totalLessons - sub.completedLessons);
             const labsLeft = Math.max(0, sub.totalLabs - sub.completedLabs);
             const isUrgent = isConfigured && supportsLabs && labsLeft > 0 && labsLeft >= lessonsLeft;
+
+            const checkedItems =
+              sub.completedLabItems && sub.completedLabItems.length === sub.completedLabs
+                ? sub.completedLabItems
+                : buildInitialChecklist(sub.completedLabs);
+
+            const labsPercent =
+              sub.totalLabs > 0 ? Math.min(100, Math.round((sub.completedLabs / sub.totalLabs) * 100)) : 0;
 
             return (
               <div className="subject-card" key={sub.id}>
@@ -290,17 +382,35 @@ export function Subjects({ subjects, setSubjects }: Props) {
                     <small style={{ color: 'var(--muted)' }}>
                       {isConfigured
                         ? `Занятие ${sub.completedLessons} из ${sub.totalLessons}`
-                        : 'Впиши количество пар из портала вуза'}
+                        : 'Впиши данные из портала вуза'}
                     </small>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
                     <span
                       className={`subject-badge ${isUrgent ? 'danger' : ''}`}
                       style={!isConfigured ? { background: 'var(--soft-bg)', color: 'var(--muted)' } : undefined}
                     >
                       {!isConfigured ? 'Не заполнено' : isUrgent ? 'Поторопись!' : 'В графике'}
                     </span>
+
+                    {/* Кнопка карандашик / галочка сохранения */}
+                    {isConfigured && (
+                      <button
+                        type="button"
+                        className="mini-btn"
+                        onClick={() => setEditingId(editingId === sub.id ? null : sub.id)}
+                        title={isEditing ? 'Сохранить числа' : 'Редактировать цифры'}
+                        style={
+                          isEditing
+                            ? { background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' }
+                            : undefined
+                        }
+                      >
+                        {isEditing ? <Check size={14} /> : <Pencil size={14} />}
+                      </button>
+                    )}
+
                     <button className="mini-btn" onClick={() => deleteSubject(sub.id)} title="Удалить">
                       <Trash2 size={14} />
                     </button>
@@ -311,64 +421,172 @@ export function Subjects({ subjects, setSubjects }: Props) {
                   <div className="warning-banner" style={{ margin: 0, padding: '10px 12px', fontSize: '12px' }}>
                     <AlertTriangle size={18} style={{ flexShrink: 0 }} />
                     <span>
-                      Осталось <b>{lessonsLeft}</b> {lessonsLeft === 1 ? 'пара' : 'пар'}, а сдать нужно ещё <b>{labsLeft}</b> раб.!
+                      Осталось <b>{lessonsLeft}</b> {lessonsLeft === 1 ? 'пара' : 'пар'}, сдать нужно ещё <b>{labsLeft}</b> раб.!
                     </span>
                   </div>
                 )}
 
-               <div className="counter-row">
+                {/* Блок отображения пар (чистый вид в режиме просмотра, поля в режиме редактирования) */}
+                                <div className="counter-row">
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <BookOpen size={15} /> Прошло пар:
                   </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <input
-                      type="number"
-                      min={0}
-                      max={200}
-                      value={sub.completedLessons || ''}
-                      placeholder="0"
-                      onChange={e => updateNumber(sub.id, 'completedLessons', Number(e.target.value))}
-                      style={numInputStyle}
-                    />
-                    <span style={{ color: 'var(--muted)' }}>из</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={200}
-                      value={sub.totalLessons || ''}
-                      placeholder="—"
-                      onChange={e => updateNumber(sub.id, 'totalLessons', Number(e.target.value))}
-                      style={numInputStyle}
-                    />
-                  </div>
-                </div>
-
-                {supportsLabs && (
-                  <div className="counter-row">
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <CheckCircle2 size={15} /> Сдано работ:
-                    </span>
+                  {isEditing ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <input
                         type="number"
                         min={0}
-                        max={100}
-                        value={sub.completedLabs || ''}
+                        max={200}
+                        value={sub.completedLessons || ''}
                         placeholder="0"
-                        onChange={e => updateNumber(sub.id, 'completedLabs', Number(e.target.value))}
+                        onChange={e => updateNumber(sub.id, 'completedLessons', Number(e.target.value))}
                         style={numInputStyle}
                       />
                       <span style={{ color: 'var(--muted)' }}>из</span>
                       <input
                         type="number"
                         min={0}
-                        max={100}
-                        value={sub.totalLabs || ''}
+                        max={200}
+                        value={sub.totalLessons || ''}
                         placeholder="—"
-                        onChange={e => updateNumber(sub.id, 'totalLabs', Number(e.target.value))}
+                        onChange={e => updateNumber(sub.id, 'totalLessons', Number(e.target.value))}
                         style={numInputStyle}
                       />
                     </div>
+                  ) : (
+                    <strong style={{ fontSize: '14px' }}>
+                      {sub.completedLessons} из {sub.totalLessons}
+                    </strong>
+                  )}
+                </div>
+
+                {supportsLabs && (
+                  <div className="counter-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <CheckCircle2 size={15} /> Сдано работ:
+                      </span>
+                      {isEditing ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={sub.completedLabs || ''}
+                            placeholder="0"
+                            onChange={e => updateNumber(sub.id, 'completedLabs', Number(e.target.value))}
+                            style={numInputStyle}
+                          />
+                          <span style={{ color: 'var(--muted)' }}>из</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={sub.totalLabs || ''}
+                            placeholder="—"
+                            onChange={e => updateNumber(sub.id, 'totalLabs', Number(e.target.value))}
+                            style={numInputStyle}
+                          />
+                        </div>
+                      ) : (
+                        <strong style={{ fontSize: '14px' }}>
+                          {sub.completedLabs} из {sub.totalLabs || '—'}
+                        </strong>
+                      )}
+                    </div>
+
+                    {!isEditing && sub.totalLabs > 0 && (
+                      <div style={{ height: '6px', background: 'var(--border)', borderRadius: '99px', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            width: `${labsPercent}%`,
+                            height: '100%',
+                            background: 'var(--accent)',
+                            transition: 'width 0.25s ease'
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+                {supportsLabs && sub.totalLabs > 0 && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(isExpanded ? null : sub.id)}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        borderRadius: '9px',
+                        border: '1px solid var(--border)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between'
+                      }}
+                    >
+                      <span>Отметить работы по списку ({sub.completedLabs}/{sub.totalLabs})</span>
+                      {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                    </button>
+
+                    {isExpanded && (
+                      <div
+                        style={{
+                          marginTop: '10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
+                          maxHeight: '220px',
+                          overflowY: 'auto',
+                          paddingRight: '4px'
+                        }}
+                      >
+                        {Array.from({ length: sub.totalLabs }, (_, idx) => {
+                          const labNum = idx + 1;
+                          const isChecked = checkedItems.includes(labNum);
+                          return (
+                            <label
+                              key={labNum}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '8px 12px',
+                                borderRadius: '8px',
+                                background: isChecked ? 'var(--accent-soft)' : 'var(--soft-bg)',
+                                border: '1px solid var(--border)',
+                                cursor: 'pointer',
+                                fontSize: '13px'
+                              }}
+                            >
+                              <span
+                                style={{
+                                  textDecoration: isChecked ? 'line-through' : 'none',
+                                  color: isChecked ? 'var(--muted)' : 'var(--text)',
+                                  fontWeight: isChecked ? 400 : 500
+                                }}
+                              >
+                                Работа №{labNum}
+                              </span>
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleLabCheckbox(sub.id, labNum)}
+                                style={{
+                                  width: '17px',
+                                  height: '17px',
+                                  accentColor: 'var(--accent)',
+                                  cursor: 'pointer'
+                                }}
+                              />
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
