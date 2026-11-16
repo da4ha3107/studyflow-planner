@@ -1,21 +1,27 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
 import {
   FileSpreadsheet, Plus, Trash2, Clock,
   MapPin, BookOpen, Calendar, Check
 } from 'lucide-react';
-import type { Subject, ScheduleItem, DayOfWeek } from '../types';
+import type { Subject, ScheduleItem, DayOfWeek, UserProfile } from '../types';
+import { API_URL } from '../utils/api';
 import { parseVsuFile, type ParsedVsuResult } from '../utils/parseVsuSchedule';
+
 
 interface Props {
   subjects: Subject[];
   setSubjects: React.Dispatch<React.SetStateAction<Subject[]>>;
   schedule: ScheduleItem[];
   setSchedule: React.Dispatch<React.SetStateAction<ScheduleItem[]>>;
+  user: UserProfile;
+  setUser: React.Dispatch<React.SetStateAction<UserProfile | null>>;
 }
+
 
 const DAYS: DayOfWeek[] = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
-export function Schedule({ subjects, setSubjects, schedule, setSchedule }: Props) {
+export function Schedule({ subjects, setSubjects, schedule, setSchedule, user, setUser }: Props) {
   const [selectedDay, setSelectedDay] = useState<DayOfWeek>('Пн');
   const [entryType, setEntryType] = useState<'subject' | 'onetime'>('subject');
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>(subjects[0]?.id || '');
@@ -26,7 +32,7 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule }: Props
   const [isAdminMode, setIsAdminMode] = useState(false);
 
   const [parsedFile, setParsedFile] = useState<ParsedVsuResult | null>(null);
-  const [selectedGroup, setSelectedGroup] = useState<string>('');
+
 
   const dayItems = schedule
     .filter(item => item.day === selectedDay)
@@ -90,15 +96,19 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule }: Props
   };
 
 
-    // Общая база расписаний всех групп, загруженная администратором
-  const [vsuDatabase, setVsuDatabase] = useState<Record<string, ScheduleItem[]>>(() => {
-    const saved = localStorage.getItem('studyflow_vsu_db');
-    return saved ? JSON.parse(saved) : {};
-  });
+     const [vsuDatabase, setVsuDatabase] = useState<Record<string, ScheduleItem[]>>({});
+  const [selectedGroup, setSelectedGroup] = useState<string>(user.group || '');
+
+  useEffect(() => {
+    fetch(`${API_URL}/vsu-groups`)
+      .then(res => (res.ok ? res.json() : {}))
+      .then(data => setVsuDatabase(data))
+      .catch(() => console.error('Не удалось загрузить группы с сервера'));
+  }, []);
 
   const availableGroups = Object.keys(vsuDatabase);
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -109,37 +119,34 @@ export function Schedule({ subjects, setSubjects, schedule, setSchedule }: Props
         return;
       }
 
-      // Собираем расписание сразу для всех найденных групп
       const allGroupsMap: Record<string, ScheduleItem[]> = {};
       parsed.groups.forEach(groupCode => {
         allGroupsMap[groupCode] = parsed.getScheduleForGroup(groupCode, subjects);
       });
 
       setVsuDatabase(allGroupsMap);
-      localStorage.setItem('studyflow_vsu_db', JSON.stringify(allGroupsMap));
-      setImportStatus(`Таблица загружена! Доступно групп для выбора: ${parsed.groups.length}.`);
+      await fetch(`${API_URL}/vsu-groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(allGroupsMap)
+      });
+
+      setImportStatus(`Таблица загружена в базу! Доступно групп для выбора: ${parsed.groups.length}.`);
       setTimeout(() => setImportStatus(''), 5000);
     } catch {
       setImportStatus('Ошибка при чтении файла. Проверьте формат .xlsx или .csv.');
     }
   };
 
-    const handleSelectStudentGroup = (groupCode: string) => {
+  const handleSelectStudentGroup = (groupCode: string) => {
     setSelectedGroup(groupCode);
-
-    // Обновляем группу в профиле пользователя
-    const savedUser = localStorage.getItem('studyflow_user');
-    if (savedUser) {
-      const parsedUser = JSON.parse(savedUser);
-      parsedUser.group = groupCode;
-      localStorage.setItem('studyflow_user', JSON.stringify(parsedUser));
-    }
+    setUser({ ...user, group: groupCode });
 
     if (!groupCode) {
-      // Выбран режим "Личный планер (без группы)"
       setSchedule([]);
       return;
     }
+
 
     const groupLessons = vsuDatabase[groupCode] || [];
     const detectType = (rawTitle: string): Subject['lessonType'] => {

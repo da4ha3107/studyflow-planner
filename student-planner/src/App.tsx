@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import './App.css';
 import type { Subject, UserProfile, Task, ScheduleItem, DayOfWeek } from './types';
 import { Sidebar, type ActiveTab } from './components/Sidebar';
@@ -8,6 +8,7 @@ import { Auth } from './pages/Auth';
 import { Dashboard } from './pages/Dashboard';
 import { Subjects } from './pages/Subjects';
 import { Schedule } from './pages/Schedule';
+import { API_URL, getAuthHeaders } from './utils/api';
 
 function App() {
   const [palette, setPalette] = useState(() => localStorage.getItem('palette') || 'lavender');
@@ -19,20 +20,10 @@ function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const [subjects, setSubjects] = useState<Subject[]>(() => {
-    const saved = localStorage.getItem('studyflow_subjects');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem('studyflow_tasks');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [schedule, setSchedule] = useState<ScheduleItem[]>(() => {
-    const saved = localStorage.getItem('studyflow_schedule');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
+  const isInitialLoad = useRef(true);
 
   useEffect(() => {
     document.documentElement.dataset.palette = palette;
@@ -41,19 +32,57 @@ function App() {
     localStorage.setItem('mode', mode);
   }, [palette, mode]);
 
+  // 1. Загрузка всех данных пользователя из PostgreSQL при входе
   useEffect(() => {
-    localStorage.setItem('studyflow_subjects', JSON.stringify(subjects));
-  }, [subjects]);
+    if (!user) return;
+    const token = localStorage.getItem('studyflow_token');
+    if (!token) return;
 
+    isInitialLoad.current = true;
+    fetch(`${API_URL}/data`, { headers: getAuthHeaders() })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (data) {
+          setSubjects(data.subjects || []);
+          setSchedule(data.schedule || []);
+          setTasks(data.tasks || []);
+          if (data.user) {
+            setUser(data.user);
+            localStorage.setItem('studyflow_user', JSON.stringify(data.user));
+          }
+        }
+      })
+      .catch(() => console.error('Ошибка связи с сервером'))
+      .finally(() => {
+        setTimeout(() => {
+          isInitialLoad.current = false;
+        }, 300);
+      });
+  }, [user?.email]);
+
+  // 2. Автоматическое сохранение изменений в PostgreSQL
   useEffect(() => {
-    localStorage.setItem('studyflow_tasks', JSON.stringify(tasks));
-  }, [tasks]);
+    if (!user || isInitialLoad.current) return;
+    const token = localStorage.getItem('studyflow_token');
+    if (!token) return;
 
-  useEffect(() => {
-    localStorage.setItem('studyflow_schedule', JSON.stringify(schedule));
-  }, [schedule]);
+    const timeout = setTimeout(() => {
+      fetch(`${API_URL}/sync`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          group: user.group,
+          subjects,
+          schedule,
+          tasks
+        })
+      }).catch(() => console.error('Не удалось сохранить данные в БД'));
+    }, 500);
 
-  // Автоматический учёт пройденных пар по реальному времени
+    return () => clearTimeout(timeout);
+  }, [subjects, schedule, tasks, user?.group]);
+
+  // 3. Автоматический учёт пройденных пар по таймеру
   useEffect(() => {
     const checkCompletedLessons = () => {
       const now = new Date();
@@ -69,7 +98,6 @@ function App() {
 
       schedule.forEach(item => {
         if (item.day !== currentDayName || !item.subjectId || item.isOneTime) return;
-
         const [hours, mins] = item.time.split(':').map(Number);
         if (isNaN(hours) || isNaN(mins)) return;
 
@@ -109,7 +137,11 @@ function App() {
 
   const handleLogout = () => {
     setUser(null);
+    setSubjects([]);
+    setSchedule([]);
+    setTasks([]);
     localStorage.removeItem('studyflow_user');
+    localStorage.removeItem('studyflow_token');
   };
 
   if (!user) {
@@ -139,8 +171,6 @@ function App() {
           user={user}
           onLogout={handleLogout}
         />
-
-
 
         <div className="content">
           {activeTab === 'dashboard' && (
@@ -173,6 +203,8 @@ function App() {
               setSubjects={setSubjects}
               schedule={schedule}
               setSchedule={setSchedule}
+              user={user}
+              setUser={setUser}
             />
           )}
         </div>
